@@ -1,0 +1,42 @@
+"""ClimaTwin API — FastAPI entrypoint.
+
+Routers are thin for now (Day 0 scaffold); real data/model wiring lands on
+Day 1+ per the build plan. Everything is designed to run on free Google tiers.
+"""
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from .config import settings
+from .routers import microclimate, simulate, recommend, proposal, hotspots, ask
+
+app = FastAPI(
+    title="ClimaTwin API",
+    version="0.1.0",
+    description="Urban microclimate decision engine — heat, flood, air. Free-tier Google stack.",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins_list,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/health", tags=["meta"])
+def health():
+    return {
+        "status": "ok",
+        "service": "climatwin-api",
+        "version": "0.1.0",
+        "ai": "gemini-flash (ai-studio free tier)",
+    }
+
+
+app.include_router(microclimate.router)
+app.include_router(simulate.router)
+app.include_router(recommend.router)
+app.include_router(proposal.router)
+app.include_router(hotspots.router)
+app.include_router(ask.router)

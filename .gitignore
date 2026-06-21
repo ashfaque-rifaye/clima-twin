@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+backend/.venv/
+
+# Env / secrets
+.env
+*.env
+!*.env.example
+*-key.json
+service-account*.json
+*.pem
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Claude local settings
+.claude/settings.local.json

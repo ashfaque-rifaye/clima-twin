@@ -43,3 +43,40 @@ export async function getHotspots(hazard: string, limit = 6): Promise<HotspotsRe
   if (!r.ok) throw new Error(`hotspots ${r.status}`);
   return r.json();
 }
+
+export interface SimInterv {
+  type: string;
+  species?: string;
+  count: number;
+}
+
+export interface SimResult {
+  area_name?: string;
+  baseline_feels_like_c?: number;
+  projected_feels_like_c?: number;
+  delta_feels_like_c: number;
+  cooled_area_m2: number;
+  people_helped: number;
+  cost_inr: number;
+  over_budget: boolean;
+  air_quality_change?: string;
+  flood_change?: string;
+  confidence: string;
+  what_could_go_wrong: string[];
+  source: string;
+}
+
+export async function simulate(
+  lat: number,
+  lng: number,
+  interventions: SimInterv[],
+  budget_inr?: number,
+): Promise<SimResult> {
+  const r = await fetch(`${BASE}/simulate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ lat, lng, interventions, budget_inr }),
+  });
+  if (!r.ok) throw new Error(`simulate ${r.status}`);
+  return r.json();
+}

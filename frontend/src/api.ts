@@ -80,3 +80,52 @@ export async function simulate(
   if (!r.ok) throw new Error(`simulate ${r.status}`);
   return r.json();
 }
+
+export interface Recommendation {
+  area_name?: string;
+  goal: string;
+  interventions: SimInterv[];
+  effect: Partial<SimResult>;
+  rationale: string;
+  trade_offs: string[];
+  source: string;
+}
+
+export async function recommend(
+  lat: number,
+  lng: number,
+  goal: string,
+  budget_inr?: number,
+): Promise<Recommendation> {
+  const r = await fetch(`${BASE}/recommend`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ lat, lng, goal, budget_inr }),
+  });
+  if (!r.ok) throw new Error(`recommend ${r.status}`);
+  return r.json();
+}
+
+export interface AskResp { answer: string; source: string; }
+
+export async function ask(question: string): Promise<AskResp> {
+  const r = await fetch(`${BASE}/ask`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question }),
+  });
+  if (!r.ok) throw new Error(`ask ${r.status}`);
+  return r.json();
+}
+
+export interface ProposalResp { title: string; markdown: string; source: string; }
+
+export async function proposal(area_name: string, plan: unknown): Promise<ProposalResp> {
+  const r = await fetch(`${BASE}/proposal`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ area_name, plan }),
+  });
+  if (!r.ok) throw new Error(`proposal ${r.status}`);
+  return r.json();
+}

@@ -2,11 +2,15 @@
 
 Free-tier-first: Gemini via AI Studio API key (not Vertex AI).
 """
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_ENV = Path(__file__).resolve().parent.parent / ".env"  # backend/.env, regardless of CWD
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=_ENV, extra="ignore")
 
     # Gemini (Google AI Studio, free Flash tier)
     gemini_api_key: str = ""

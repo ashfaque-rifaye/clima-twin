@@ -3,8 +3,11 @@
 Routers are thin for now (Day 0 scaffold); real data/model wiring lands on
 Day 1+ per the build plan. Everything is designed to run on free Google tiers.
 """
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .routers import microclimate, simulate, recommend, proposal, hotspots, ask
@@ -40,3 +43,9 @@ app.include_router(recommend.router)
 app.include_router(proposal.router)
 app.include_router(hotspots.router)
 app.include_router(ask.router)
+
+# Serve the built frontend (present in the container image at /app/static).
+# Mounted last so API routes above take precedence; skipped in local dev.
+_STATIC = Path(__file__).resolve().parent.parent / "static"
+if _STATIC.is_dir():
+    app.mount("/", StaticFiles(directory=str(_STATIC), html=True), name="spa")

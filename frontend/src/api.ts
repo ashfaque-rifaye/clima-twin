@@ -1,4 +1,6 @@
-const BASE = (import.meta.env.VITE_API_BASE as string) || "http://localhost:8000";
+// In the deployed container the frontend is served same-origin, so VITE_API_BASE
+// is built as "" (relative). Locally it defaults to the dev backend.
+const BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? "http://localhost:8000";
 
 export interface Microclimate {
   lat: number;

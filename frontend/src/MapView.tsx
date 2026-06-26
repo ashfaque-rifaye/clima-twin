@@ -1,14 +1,18 @@
 /// <reference types="google.maps" />
 import { useEffect, useState } from "react";
-import { APIProvider, Map, useMap, useMapsLibrary } from "@vis.gl/react-google-maps";
+import { APIProvider, Map, useMap } from "@vis.gl/react-google-maps";
 import type { Hotspot } from "./api";
 
 const CHENNAI = { lat: 13.05, lng: 80.23 };
 
-const GRADIENTS: Record<string, string[]> = {
-  heat: ["rgba(25,195,154,0)", "#19c39a", "#f6c453", "#ef6f3c", "#e23b3b"],
-  flood: ["rgba(91,208,255,0)", "#7fe0ff", "#5bd0ff", "#2b8bff", "#1a5fd0"],
-  air: ["rgba(155,232,192,0)", "#9be8c0", "#cdb4ff", "#8c5cff", "#6a2fe0"],
+const RAMP: Record<string, string[]> = {
+  heat: ["#19c39a", "#f6c453", "#ef6f3c", "#e23b3b"],
+  flood: ["#7fe0ff", "#5bd0ff", "#2b8bff", "#1a5fd0"],
+  air: ["#9be8c0", "#cdb4ff", "#8c5cff", "#6a2fe0"],
+};
+const ramp = (h: string, s: number) => {
+  const r = RAMP[h] ?? RAMP.heat;
+  return r[s >= 0.7 ? 3 : s >= 0.55 ? 2 : s >= 0.4 ? 1 : 0];
 };
 
 const DARK: google.maps.MapTypeStyle[] = [
@@ -26,32 +30,28 @@ const DARK: google.maps.MapTypeStyle[] = [
 
 function Overlays({ hazard, nodes, onSelect }: { hazard: string; nodes: Hotspot[]; onSelect: (lat: number, lng: number) => void }) {
   const map = useMap();
-  const vis = useMapsLibrary("visualization");
-  // Loosely typed: @types/google.maps visualization defs vary by version; runtime is correct.
-  const [heatmap, setHeatmap] = useState<any>(null);
-
-  useEffect(() => {
-    if (!map || !vis) return;
-    const hm = new (vis as any).HeatmapLayer({ map, radius: 72, opacity: 0.65 });
-    setHeatmap(hm);
-    return () => hm.setMap(null);
-  }, [map, vis]);
-
-  useEffect(() => {
-    if (!heatmap) return;
-    heatmap.setData(nodes.map((n) => ({ location: new google.maps.LatLng(n.lat, n.lng), weight: Math.pow(n.priority_score, 1.5) })));
-    heatmap.set("gradient", GRADIENTS[hazard] ?? GRADIENTS.heat);
-  }, [heatmap, hazard, nodes]);
 
   useEffect(() => {
     if (!map) return;
-    const markers = nodes.map((n) => {
-      const m = new google.maps.Marker({ position: { lat: n.lat, lng: n.lng }, map, title: `${n.name} · ${n.priority_score.toFixed(2)}` });
-      m.addListener("click", () => onSelect(n.lat, n.lng));
-      return m;
-    });
-    return () => markers.forEach((m) => m.setMap(null));
-  }, [map, nodes, onSelect]);
+    const overlays: Array<google.maps.Circle | google.maps.Marker> = [];
+    try {
+      nodes.forEach((n) => {
+        const col = ramp(hazard, n.priority_score);
+        const halo = new google.maps.Circle({ map, center: { lat: n.lat, lng: n.lng }, radius: 1000 + n.priority_score * 1700, fillColor: col, fillOpacity: 0.16, strokeWeight: 0, clickable: false });
+        const core = new google.maps.Circle({ map, center: { lat: n.lat, lng: n.lng }, radius: 380 + n.priority_score * 520, fillColor: col, fillOpacity: 0.5, strokeColor: "#ffffff", strokeOpacity: 0.5, strokeWeight: 1 });
+        core.addListener("click", () => onSelect(n.lat, n.lng));
+        const marker = new google.maps.Marker({
+          position: { lat: n.lat, lng: n.lng }, map, title: `${n.name} · ${n.priority_score.toFixed(2)}`,
+          label: { text: n.name, color: "#e8eef3", fontSize: "11px", fontWeight: "600" },
+        });
+        marker.addListener("click", () => onSelect(n.lat, n.lng));
+        overlays.push(halo, core, marker);
+      });
+    } catch (e) {
+      console.warn("overlay error", e);
+    }
+    return () => overlays.forEach((o) => { try { o.setMap(null); } catch { /* noop */ } });
+  }, [map, nodes, hazard, onSelect]);
 
   return null;
 }

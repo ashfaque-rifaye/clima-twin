@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import HeatBoard from "./HeatBoard";
 import MapView from "./MapView";
+import ErrorBoundary from "./ErrorBoundary";
 import {
   ask, getConfig, getHotspots, getMicroclimate, proposal, recommend, simulate,
 } from "./api";
@@ -209,9 +210,13 @@ export default function App() {
             <span className="legend"><i className="lo" /> low<i className="hi" /> high · {nodes.length} zones</span>
           </div>
           <div className="stage-board">
-            {mapsKey
-              ? <MapView apiKey={mapsKey} hazard={hazard} nodes={nodes} selected={selected} onSelect={inspect} />
-              : <HeatBoard hazard={hazard} nodes={nodes} selected={selected} onSelect={inspect} />}
+            {mapsKey ? (
+              <ErrorBoundary fallback={<HeatBoard hazard={hazard} nodes={nodes} selected={selected} onSelect={inspect} />}>
+                <MapView apiKey={mapsKey} hazard={hazard} nodes={nodes} selected={selected} onSelect={inspect} />
+              </ErrorBoundary>
+            ) : (
+              <HeatBoard hazard={hazard} nodes={nodes} selected={selected} onSelect={inspect} />
+            )}
           </div>
         </main>
 

@@ -131,3 +131,11 @@ export async function proposal(area_name: string, plan: unknown): Promise<Propos
   if (!r.ok) throw new Error(`proposal ${r.status}`);
   return r.json();
 }
+
+export interface AppConfig { maps_api_key: string; has_maps: boolean; }
+
+export async function getConfig(): Promise<AppConfig> {
+  const r = await fetch(`${BASE}/config`);
+  if (!r.ok) throw new Error(`config ${r.status}`);
+  return r.json();
+}

@@ -37,6 +37,15 @@ def health():
     }
 
 
+@app.get("/config", tags=["meta"])
+def config():
+    """Runtime config for the frontend (Maps key served here, not baked into the build)."""
+    return {
+        "maps_api_key": settings.google_maps_api_key,
+        "has_maps": bool(settings.google_maps_api_key),
+    }
+
+
 app.include_router(microclimate.router)
 app.include_router(simulate.router)
 app.include_router(recommend.router)

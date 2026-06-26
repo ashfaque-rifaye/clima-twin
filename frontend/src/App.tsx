@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import HeatBoard from "./HeatBoard";
+import MapView from "./MapView";
 import {
-  ask, getHotspots, getMicroclimate, proposal, recommend, simulate,
+  ask, getConfig, getHotspots, getMicroclimate, proposal, recommend, simulate,
 } from "./api";
 import type {
   Hotspot, Microclimate, ProposalResp, Recommendation, SimResult,
@@ -61,6 +62,7 @@ export default function App() {
   const [selected, setSelected] = useState<{ lat: number; lng: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState(false);
+  const [mapsKey, setMapsKey] = useState<string | null>(null);
 
   const [mix, setMix] = useState<Record<string, number>>({});
   const [budget, setBudget] = useState(500000);
@@ -82,6 +84,10 @@ export default function App() {
       .then((r) => { setNodes(r.hotspots); setApiError(false); })
       .catch(() => { setNodes([]); setApiError(true); });
   }, [hazard]);
+
+  useEffect(() => {
+    getConfig().then((c) => { if (c.has_maps) setMapsKey(c.maps_api_key); }).catch(() => {});
+  }, []);
 
   const inspect = useCallback(async (lat: number, lng: number) => {
     setSelected({ lat, lng });
@@ -203,7 +209,9 @@ export default function App() {
             <span className="legend"><i className="lo" /> low<i className="hi" /> high · {nodes.length} zones</span>
           </div>
           <div className="stage-board">
-            <HeatBoard hazard={hazard} nodes={nodes} selected={selected} onSelect={inspect} />
+            {mapsKey
+              ? <MapView apiKey={mapsKey} hazard={hazard} nodes={nodes} selected={selected} onSelect={inspect} />
+              : <HeatBoard hazard={hazard} nodes={nodes} selected={selected} onSelect={inspect} />}
           </div>
         </main>
 

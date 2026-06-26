@@ -139,3 +139,21 @@ export async function getConfig(): Promise<AppConfig> {
   if (!r.ok) throw new Error(`config ${r.status}`);
   return r.json();
 }
+
+export interface PointData {
+  lat: number;
+  lng: number;
+  area_name?: string;
+  live: boolean;
+  heat?: { feels_like_c?: number; temp_c?: number; condition?: string; humidity?: number };
+  air?: { aqi?: number; category?: string; dominant?: string; health?: string };
+  flood?: { risk?: string; rain_prob?: number; basis?: string };
+  prediction?: string;
+  source: string;
+}
+
+export async function getPoint(lat: number, lng: number): Promise<PointData> {
+  const r = await fetch(`${BASE}/point?lat=${lat}&lng=${lng}`);
+  if (!r.ok) throw new Error(`point ${r.status}`);
+  return r.json();
+}

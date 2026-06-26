@@ -16,8 +16,10 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"  # Flash only — never Pro (paid)
 
-    # Google Maps Platform
+    # Google Maps Platform (browser key, referrer-restricted)
     google_maps_api_key: str = ""
+    # Server-side key (API-restricted) for Weather + Air Quality REST calls
+    server_api_key: str = ""
 
     # Google Cloud / BigQuery
     gcp_project: str = ""

@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import settings
-from .routers import microclimate, simulate, recommend, proposal, hotspots, ask
+from .routers import microclimate, simulate, recommend, proposal, hotspots, ask, point
 
 app = FastAPI(
     title="ClimaTwin API",
@@ -52,6 +52,7 @@ app.include_router(recommend.router)
 app.include_router(proposal.router)
 app.include_router(hotspots.router)
 app.include_router(ask.router)
+app.include_router(point.router)
 
 # Serve the built frontend (present in the container image at /app/static).
 # Mounted last so API routes above take precedence; skipped in local dev.

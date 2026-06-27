@@ -27,6 +27,18 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def _cache_headers(request, call_next):
+    """Never cache index.html (so the latest build always loads); cache hashed assets forever."""
+    resp = await call_next(request)
+    path = request.url.path
+    if path.startswith("/assets/"):
+        resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    elif "text/html" in resp.headers.get("content-type", ""):
+        resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return resp
+
+
 @app.get("/health", tags=["meta"])
 def health():
     return {

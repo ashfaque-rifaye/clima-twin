@@ -14,20 +14,6 @@ const COLORS: Record<string, RGB[]> = {
   flood: [[150, 230, 255], [90, 200, 255], [58, 160, 255], [43, 111, 255], [26, 63, 208], [6, 16, 90]],
 };
 
-const DARK: google.maps.MapTypeStyle[] = [
-  { elementType: "geometry", stylers: [{ color: "#0a121a" }] },
-  { elementType: "labels.text.stroke", stylers: [{ color: "#0a121a" }] },
-  { elementType: "labels.text.fill", stylers: [{ color: "#62748a" }] },
-  { featureType: "poi", stylers: [{ visibility: "off" }] },
-  { featureType: "transit", stylers: [{ visibility: "off" }] },
-  { featureType: "road", elementType: "geometry", stylers: [{ color: "#16222e" }] },
-  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#1e3040" }] },
-  { featureType: "road", elementType: "labels", stylers: [{ visibility: "off" }] },
-  { featureType: "water", elementType: "geometry", stylers: [{ color: "#05203a" }] },
-  { featureType: "administrative", elementType: "geometry", stylers: [{ color: "#26333f" }] },
-  { featureType: "landscape", elementType: "geometry", stylers: [{ color: "#0c1620" }] },
-];
-
 function Overlay({ apiKey, hazard, selected }: { apiKey: string; hazard: string; selected: { lat: number; lng: number } | null }) {
   const map = useMap();
   const [points, setPoints] = useState<{ lat: number; lng: number; weight: number }[]>([]);
@@ -38,11 +24,8 @@ function Overlay({ apiKey, hazard, selected }: { apiKey: string; hazard: string;
   // first few seconds so one lands once the map is ready; harmless afterwards.
   useEffect(() => {
     if (!map) return;
-    const fire = () => window.dispatchEvent(new Event("resize"));
-    fire();
-    const iv = setInterval(fire, 500);
-    const stop = setTimeout(() => clearInterval(iv), 10000);
-    return () => { clearInterval(iv); clearTimeout(stop); };
+    const t = setTimeout(() => window.dispatchEvent(new Event("resize")), 600);
+    return () => clearTimeout(t);
   }, [map]);
 
   // fetch the live grid for heat/flood
@@ -115,7 +98,7 @@ export default function MapView({ apiKey, hazard, selected, onSelect }: Props) {
           defaultCenter={CHENNAI}
           defaultZoom={12}
           mapTypeId={satellite ? "hybrid" : "roadmap"}
-          styles={satellite ? undefined : DARK}
+          colorScheme="DARK"
           gestureHandling="greedy"
           disableDefaultUI
           clickableIcons={false}

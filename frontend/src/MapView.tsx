@@ -1,14 +1,17 @@
 /// <reference types="google.maps" />
-import { useEffect, useState } from "react";
-import { APIProvider, Map, useMap, useMapsLibrary } from "@vis.gl/react-google-maps";
+import { useEffect, useRef, useState } from "react";
+import { APIProvider, Map, useMap } from "@vis.gl/react-google-maps";
+import { GoogleMapsOverlay } from "@deck.gl/google-maps";
+import { HeatmapLayer } from "@deck.gl/aggregation-layers";
 import { getGrid } from "./api";
 
 const CHENNAI = { lat: 13.06, lng: 80.24 };
 const AQ_TYPE = "UAQI_RED_GREEN";
 
-const GRAD: Record<string, string[]> = {
-  heat: ["rgba(0,200,160,0)", "#1fd1a3", "#f6c453", "#ff8a3c", "#ff3b30", "#7a0010"],
-  flood: ["rgba(91,208,255,0)", "#9fe8ff", "#3aa0ff", "#2b6fff", "#1a3fd0", "#06104f"],
+type RGB = [number, number, number];
+const COLORS: Record<string, RGB[]> = {
+  heat: [[0, 180, 150], [120, 210, 90], [246, 196, 83], [255, 138, 60], [255, 59, 48], [150, 0, 20]],
+  flood: [[150, 230, 255], [90, 200, 255], [58, 160, 255], [43, 111, 255], [26, 63, 208], [6, 16, 90]],
 };
 
 const DARK: google.maps.MapTypeStyle[] = [
@@ -25,11 +28,23 @@ const DARK: google.maps.MapTypeStyle[] = [
   { featureType: "landscape", elementType: "geometry", stylers: [{ color: "#0c1620" }] },
 ];
 
-function HeatOverlay({ apiKey, hazard, selected }: { apiKey: string; hazard: string; selected: { lat: number; lng: number } | null }) {
+function Overlay({ apiKey, hazard, selected }: { apiKey: string; hazard: string; selected: { lat: number; lng: number } | null }) {
   const map = useMap();
-  const vis = useMapsLibrary("visualization");
   const [points, setPoints] = useState<{ lat: number; lng: number; weight: number }[]>([]);
+  const deckRef = useRef<GoogleMapsOverlay | null>(null);
 
+  // force the map to paint tiles on first load (fixes blank-until-resize)
+  useEffect(() => {
+    if (!map) return;
+    const t = setTimeout(() => {
+      google.maps.event.trigger(map, "resize");
+      const c = map.getCenter();
+      if (c) map.setCenter(c);
+    }, 350);
+    return () => clearTimeout(t);
+  }, [map]);
+
+  // fetch the live grid for heat/flood
   useEffect(() => {
     if (hazard === "air") { setPoints([]); return; }
     let alive = true;
@@ -37,18 +52,27 @@ function HeatOverlay({ apiKey, hazard, selected }: { apiKey: string; hazard: str
     return () => { alive = false; };
   }, [hazard]);
 
-  // heat / flood -> continuous HeatmapLayer from the live grid
+  // deck.gl GPU heatmap for heat/flood
   useEffect(() => {
-    if (!map || !vis || hazard === "air" || !points.length) return;
-    let hm: { setMap(m: google.maps.Map | null): void } | undefined;
-    try {
-      const data = points.map((p) => ({ location: new google.maps.LatLng(p.lat, p.lng), weight: p.weight }));
-      hm = new (vis as unknown as { HeatmapLayer: new (o: unknown) => { setMap(m: google.maps.Map | null): void } }).HeatmapLayer({
-        data, map, radius: 64, opacity: 0.72, dissipating: true, maxIntensity: 1, gradient: GRAD[hazard],
-      });
-    } catch (e) { console.warn("heatmap error", e); }
-    return () => { try { hm?.setMap(null); } catch { /* noop */ } };
-  }, [map, vis, hazard, points]);
+    if (!map) return;
+    if (!deckRef.current) { deckRef.current = new GoogleMapsOverlay({ interleaved: false }); deckRef.current.setMap(map); }
+    const layers = hazard !== "air" && points.length
+      ? [new HeatmapLayer<{ lat: number; lng: number; weight: number }>({
+          id: `heat-${hazard}`,
+          data: points,
+          getPosition: (d) => [d.lng, d.lat],
+          getWeight: (d) => d.weight,
+          radiusPixels: 95,
+          intensity: 1.3,
+          threshold: 0.03,
+          colorRange: COLORS[hazard] ?? COLORS.heat,
+          opacity: 0.7,
+        })]
+      : [];
+    deckRef.current.setProps({ layers });
+  }, [map, hazard, points]);
+
+  useEffect(() => () => { deckRef.current?.setMap(null); deckRef.current = null; }, []);
 
   // air -> real Google Air Quality heatmap tiles
   useEffect(() => {
@@ -61,12 +85,10 @@ function HeatOverlay({ apiKey, hazard, selected }: { apiKey: string; hazard: str
       getTileUrl: (c, z) => `https://airquality.googleapis.com/v1/mapTypes/${AQ_TYPE}/heatmapTiles/${z}/${c.x}/${c.y}?key=${apiKey}`,
     });
     map.overlayMapTypes.push(overlay);
-    return () => {
-      const i = map.overlayMapTypes.getArray().indexOf(overlay);
-      if (i >= 0) map.overlayMapTypes.removeAt(i);
-    };
+    return () => { const i = map.overlayMapTypes.getArray().indexOf(overlay); if (i >= 0) map.overlayMapTypes.removeAt(i); };
   }, [map, hazard, apiKey]);
 
+  // selected marker
   useEffect(() => {
     if (!map || !selected) return;
     const m = new google.maps.Marker({ map, position: selected, animation: google.maps.Animation.DROP });
@@ -99,7 +121,7 @@ export default function MapView({ apiKey, hazard, selected, onSelect }: Props) {
           onClick={(ev) => { const ll = ev.detail.latLng; if (ll) onSelect(ll.lat, ll.lng); }}
           style={{ width: "100%", height: "100%" }}
         >
-          <HeatOverlay apiKey={apiKey} hazard={hazard} selected={selected} />
+          <Overlay apiKey={apiKey} hazard={hazard} selected={selected} />
         </Map>
       </APIProvider>
       <div className="map-toggles">

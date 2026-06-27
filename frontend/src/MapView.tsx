@@ -19,13 +19,16 @@ function Overlay({ apiKey, hazard, selected }: { apiKey: string; hazard: string;
   const [points, setPoints] = useState<{ lat: number; lng: number; weight: number }[]>([]);
   const deckRef = useRef<GoogleMapsOverlay | null>(null);
 
-  // force the map to paint tiles on first load (blank-until-resize bug);
-  // a window 'resize' makes Google Maps re-render. Fire on an interval for the
-  // first few seconds so one lands once the map is ready; harmless afterwards.
+  // blank-until-resize bug: fire ONE window 'resize' after the map has settled
+  // (its first 'idle'), which makes Google Maps re-measure and paint full tiles.
+  // Firing too early locks the map at a tiny viewport, so wait for idle.
   useEffect(() => {
     if (!map) return;
-    const t = setTimeout(() => window.dispatchEvent(new Event("resize")), 600);
-    return () => clearTimeout(t);
+    const l = map.addListener("idle", () => {
+      l.remove();
+      setTimeout(() => window.dispatchEvent(new Event("resize")), 150);
+    });
+    return () => l.remove();
   }, [map]);
 
   // fetch the live grid for heat/flood

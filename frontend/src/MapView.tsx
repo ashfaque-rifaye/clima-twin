@@ -33,15 +33,15 @@ function Overlay({ apiKey, hazard, selected }: { apiKey: string; hazard: string;
   const [points, setPoints] = useState<{ lat: number; lng: number; weight: number }[]>([]);
   const deckRef = useRef<GoogleMapsOverlay | null>(null);
 
-  // force the map to paint tiles on first load (fixes blank-until-resize)
+  // force the map to paint tiles on first load (blank-until-resize bug);
+  // a window 'resize' is what actually makes Google Maps re-render here.
   useEffect(() => {
     if (!map) return;
-    const t = setTimeout(() => {
-      google.maps.event.trigger(map, "resize");
-      const c = map.getCenter();
-      if (c) map.setCenter(c);
-    }, 350);
-    return () => clearTimeout(t);
+    const fire = () => window.dispatchEvent(new Event("resize"));
+    const t1 = setTimeout(fire, 300);
+    const t2 = setTimeout(fire, 900);
+    const t3 = setTimeout(fire, 1800);
+    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
   }, [map]);
 
   // fetch the live grid for heat/flood
@@ -62,9 +62,9 @@ function Overlay({ apiKey, hazard, selected }: { apiKey: string; hazard: string;
           data: points,
           getPosition: (d) => [d.lng, d.lat],
           getWeight: (d) => d.weight,
-          radiusPixels: 95,
-          intensity: 1.3,
-          threshold: 0.03,
+          radiusPixels: 135,
+          intensity: 1.2,
+          threshold: 0.02,
           colorRange: COLORS[hazard] ?? COLORS.heat,
           opacity: 0.7,
         })]

@@ -166,3 +166,11 @@ export async function getPoint(lat: number, lng: number): Promise<PointData> {
   if (!r.ok) throw new Error(`point ${r.status}`);
   return r.json();
 }
+
+export interface GridResp { hazard: string; points: { lat: number; lng: number; weight: number }[]; }
+
+export async function getGrid(hazard: string): Promise<GridResp> {
+  const r = await fetch(`${BASE}/grid?hazard=${hazard}`);
+  if (!r.ok) throw new Error(`grid ${r.status}`);
+  return r.json();
+}

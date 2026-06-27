@@ -110,7 +110,7 @@ export default function App() {
     <div className="app">
       {mapsKey ? (
         <ErrorBoundary fallback={<HeatBoard hazard={hazard} nodes={nodes} selected={selected} onSelect={inspect} />}>
-          <MapView apiKey={mapsKey} hazard={hazard} nodes={nodes} selected={selected} onSelect={inspect} />
+          <MapView apiKey={mapsKey} hazard={hazard} selected={selected} onSelect={inspect} />
         </ErrorBoundary>
       ) : (
         <div className="board-wrap"><HeatBoard hazard={hazard} nodes={nodes} selected={selected} onSelect={inspect} /></div>

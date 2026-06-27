@@ -3,6 +3,7 @@
 Uses the server-side (API-restricted) key. Every call degrades gracefully to
 None so /point can fall back to sample data.
 """
+import asyncio
 import time
 
 import httpx
@@ -10,7 +11,12 @@ import httpx
 from .config import settings
 
 _cache: dict[tuple, tuple[float, dict]] = {}
+_grid_cache: dict[str, tuple[float, list]] = {}
 _TTL = 600  # seconds
+_GRID_TTL = 1800  # 30 min
+
+# Chennai bounding box: lat_min, lat_max, lng_min, lng_max
+CHENNAI_BBOX = (12.84, 13.24, 80.15, 80.34)
 
 
 def _key() -> str:
@@ -141,3 +147,68 @@ def realtime_point(lat: float, lng: float) -> dict:
     }
     _cache[ck] = (now, data)
     return data
+
+
+# ---- continuous hazard grids (for the map heat overlays) ----
+
+def _grid_pts(n: int) -> list[tuple[float, float]]:
+    a, b, c, d = CHENNAI_BBOX
+    return [(a + (b - a) * i / (n - 1), c + (d - c) * j / (n - 1)) for i in range(n) for j in range(n)]
+
+
+async def _afeels(client: httpx.AsyncClient, lat: float, lng: float):
+    try:
+        r = await client.get(
+            "https://weather.googleapis.com/v1/currentConditions:lookup",
+            params={"key": _key(), "location.latitude": lat, "location.longitude": lng, "unitsSystem": "METRIC"},
+        )
+        if r.status_code == 200:
+            return (r.json().get("feelsLikeTemperature") or {}).get("degrees")
+    except Exception:
+        pass
+    return None
+
+
+async def heat_grid(n: int = 8) -> list[dict]:
+    pts = _grid_pts(n)
+    async with httpx.AsyncClient(timeout=10) as client:
+        vals = await asyncio.gather(*[_afeels(client, la, ln) for la, ln in pts])
+    return [{"lat": la, "lng": ln, "v": v} for (la, ln), v in zip(pts, vals) if v is not None]
+
+
+def elevation_grid(n: int = 8) -> list[dict]:
+    pts = _grid_pts(n)
+    locs = "|".join(f"{la},{ln}" for la, ln in pts)
+    try:
+        r = httpx.get("https://maps.googleapis.com/maps/api/elevation/json", params={"key": _key(), "locations": locs}, timeout=15)
+        if r.status_code == 200:
+            return [{"lat": x["location"]["lat"], "lng": x["location"]["lng"], "v": x["elevation"]} for x in (r.json().get("results") or [])]
+    except Exception:
+        pass
+    return []
+
+
+def _norm(raw: list[dict], invert: bool = False) -> list[dict]:
+    vals = [p["v"] for p in raw if p["v"] is not None]
+    if not vals:
+        return []
+    lo, hi = min(vals), max(vals)
+    span = (hi - lo) or 1.0
+    return [
+        {"lat": p["lat"], "lng": p["lng"], "weight": round(((hi - p["v"]) / span) if invert else ((p["v"] - lo) / span), 3)}
+        for p in raw
+    ]
+
+
+async def hazard_grid(hazard: str, n: int = 8) -> list[dict]:
+    now = time.time()
+    if hazard in _grid_cache and now - _grid_cache[hazard][0] < _GRID_TTL:
+        return _grid_cache[hazard][1]
+    if hazard == "heat":
+        pts = _norm(await heat_grid(n))
+    elif hazard == "flood":
+        pts = _norm(elevation_grid(n), invert=True)  # low elevation => high flood weight
+    else:
+        pts = []
+    _grid_cache[hazard] = (now, pts)
+    return pts

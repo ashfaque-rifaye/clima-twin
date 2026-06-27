@@ -1,24 +1,20 @@
 /// <reference types="google.maps" />
 import { useEffect, useState } from "react";
-import { APIProvider, Map, useMap } from "@vis.gl/react-google-maps";
-import type { Hotspot } from "./api";
+import { APIProvider, Map, useMap, useMapsLibrary } from "@vis.gl/react-google-maps";
+import { getGrid } from "./api";
 
 const CHENNAI = { lat: 13.06, lng: 80.24 };
+const AQ_TYPE = "UAQI_RED_GREEN";
 
-const RAMP: Record<string, string[]> = {
-  heat: ["#33c08a", "#f6c453", "#ff8a3c", "#ff3b30"],
-  flood: ["#7fe0ff", "#5bd0ff", "#2b8bff", "#1a5fd0"],
-  air: ["#7ed6a8", "#cdb4ff", "#9b6bff", "#7c3bff"],
-};
-const ramp = (h: string, s: number) => {
-  const r = RAMP[h] ?? RAMP.heat;
-  return r[s >= 0.7 ? 3 : s >= 0.55 ? 2 : s >= 0.4 ? 1 : 0];
+const GRAD: Record<string, string[]> = {
+  heat: ["rgba(0,200,160,0)", "#1fd1a3", "#f6c453", "#ff8a3c", "#ff3b30", "#7a0010"],
+  flood: ["rgba(91,208,255,0)", "#9fe8ff", "#3aa0ff", "#2b6fff", "#1a3fd0", "#06104f"],
 };
 
 const DARK: google.maps.MapTypeStyle[] = [
   { elementType: "geometry", stylers: [{ color: "#0a121a" }] },
   { elementType: "labels.text.stroke", stylers: [{ color: "#0a121a" }] },
-  { elementType: "labels.text.fill", stylers: [{ color: "#5f7180" }] },
+  { elementType: "labels.text.fill", stylers: [{ color: "#62748a" }] },
   { featureType: "poi", stylers: [{ visibility: "off" }] },
   { featureType: "transit", stylers: [{ visibility: "off" }] },
   { featureType: "road", elementType: "geometry", stylers: [{ color: "#16222e" }] },
@@ -29,27 +25,47 @@ const DARK: google.maps.MapTypeStyle[] = [
   { featureType: "landscape", elementType: "geometry", stylers: [{ color: "#0c1620" }] },
 ];
 
-function Overlays({ hazard, nodes, selected }: { hazard: string; nodes: Hotspot[]; selected: { lat: number; lng: number } | null }) {
+function HeatOverlay({ apiKey, hazard, selected }: { apiKey: string; hazard: string; selected: { lat: number; lng: number } | null }) {
   const map = useMap();
+  const vis = useMapsLibrary("visualization");
+  const [points, setPoints] = useState<{ lat: number; lng: number; weight: number }[]>([]);
 
   useEffect(() => {
-    if (!map) return;
-    const circles: google.maps.Circle[] = [];
+    if (hazard === "air") { setPoints([]); return; }
+    let alive = true;
+    getGrid(hazard).then((r) => { if (alive) setPoints(r.points); }).catch(() => setPoints([]));
+    return () => { alive = false; };
+  }, [hazard]);
+
+  // heat / flood -> continuous HeatmapLayer from the live grid
+  useEffect(() => {
+    if (!map || !vis || hazard === "air" || !points.length) return;
+    let hm: { setMap(m: google.maps.Map | null): void } | undefined;
     try {
-      nodes.forEach((n) => {
-        const col = ramp(hazard, n.priority_score);
-        const k = 0.6 + n.priority_score;
-        const layers: [number, number][] = [[2400 * k, 0.1], [1300 * k, 0.18], [600 * k, 0.5]];
-        layers.forEach(([radius, fillOpacity], i) => {
-          circles.push(new google.maps.Circle({
-            map, center: { lat: n.lat, lng: n.lng }, radius, fillColor: col, fillOpacity,
-            strokeColor: "#ffffff", strokeOpacity: i === 2 ? 0.6 : 0, strokeWeight: i === 2 ? 1 : 0, clickable: false,
-          }));
-        });
+      const data = points.map((p) => ({ location: new google.maps.LatLng(p.lat, p.lng), weight: p.weight }));
+      hm = new (vis as unknown as { HeatmapLayer: new (o: unknown) => { setMap(m: google.maps.Map | null): void } }).HeatmapLayer({
+        data, map, radius: 64, opacity: 0.72, dissipating: true, maxIntensity: 1, gradient: GRAD[hazard],
       });
-    } catch (e) { console.warn("overlay error", e); }
-    return () => circles.forEach((c) => { try { c.setMap(null); } catch { /* noop */ } });
-  }, [map, nodes, hazard]);
+    } catch (e) { console.warn("heatmap error", e); }
+    return () => { try { hm?.setMap(null); } catch { /* noop */ } };
+  }, [map, vis, hazard, points]);
+
+  // air -> real Google Air Quality heatmap tiles
+  useEffect(() => {
+    if (!map || hazard !== "air") return;
+    const overlay = new google.maps.ImageMapType({
+      name: "aq",
+      tileSize: new google.maps.Size(256, 256),
+      maxZoom: 16,
+      opacity: 0.7,
+      getTileUrl: (c, z) => `https://airquality.googleapis.com/v1/mapTypes/${AQ_TYPE}/heatmapTiles/${z}/${c.x}/${c.y}?key=${apiKey}`,
+    });
+    map.overlayMapTypes.push(overlay);
+    return () => {
+      const i = map.overlayMapTypes.getArray().indexOf(overlay);
+      if (i >= 0) map.overlayMapTypes.removeAt(i);
+    };
+  }, [map, hazard, apiKey]);
 
   useEffect(() => {
     if (!map || !selected) return;
@@ -63,12 +79,11 @@ function Overlays({ hazard, nodes, selected }: { hazard: string; nodes: Hotspot[
 interface Props {
   apiKey: string;
   hazard: string;
-  nodes: Hotspot[];
   selected: { lat: number; lng: number } | null;
   onSelect: (lat: number, lng: number) => void;
 }
 
-export default function MapView({ apiKey, hazard, nodes, selected, onSelect }: Props) {
+export default function MapView({ apiKey, hazard, selected, onSelect }: Props) {
   const [satellite, setSatellite] = useState(false);
   return (
     <div className="mapview">
@@ -84,7 +99,7 @@ export default function MapView({ apiKey, hazard, nodes, selected, onSelect }: P
           onClick={(ev) => { const ll = ev.detail.latLng; if (ll) onSelect(ll.lat, ll.lng); }}
           style={{ width: "100%", height: "100%" }}
         >
-          <Overlays hazard={hazard} nodes={nodes} selected={selected} />
+          <HeatOverlay apiKey={apiKey} hazard={hazard} selected={selected} />
         </Map>
       </APIProvider>
       <div className="map-toggles">

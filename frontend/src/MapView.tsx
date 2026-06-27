@@ -1,5 +1,5 @@
 /// <reference types="google.maps" />
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { APIProvider, Map, useMap } from "@vis.gl/react-google-maps";
 import { getGrid } from "./api";
 
@@ -75,8 +75,24 @@ interface Props {
 
 export default function MapView({ apiKey, hazard, selected, onSelect }: Props) {
   const [satellite, setSatellite] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  // Blank-on-load fix: vis.gl observes the container with a ResizeObserver, so a
+  // real container size change (not a synthetic window event) is needed to make
+  // the map paint. Nudge the height by 1px a few times until the map is ready.
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const nudge = () => {
+      el.style.bottom = "1px";
+      requestAnimationFrame(() => { el.style.bottom = "0px"; });
+    };
+    const timers = [600, 1500, 3000].map((d) => window.setTimeout(nudge, d));
+    return () => timers.forEach(clearTimeout);
+  }, []);
+
   return (
-    <div className="mapview">
+    <div className="mapview" ref={wrapRef}>
       <APIProvider apiKey={apiKey}>
         <Map
           defaultCenter={CHENNAI}

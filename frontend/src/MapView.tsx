@@ -94,8 +94,12 @@ interface Props {
 
 export default function MapView({ apiKey, hazard, selected, onSelect }: Props) {
   const [satellite, setSatellite] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  // mount the map only after the container is laid out at full size
+  useEffect(() => { const t = setTimeout(() => setMounted(true), 250); return () => clearTimeout(t); }, []);
   return (
     <div className="mapview">
+      {mounted && (
       <APIProvider apiKey={apiKey}>
         <Map
           defaultCenter={CHENNAI}
@@ -111,6 +115,7 @@ export default function MapView({ apiKey, hazard, selected, onSelect }: Props) {
           <Overlay apiKey={apiKey} hazard={hazard} selected={selected} />
         </Map>
       </APIProvider>
+      )}
       <div className="map-toggles">
         <button className={!satellite ? "on" : ""} onClick={() => setSatellite(false)}>Map</button>
         <button className={satellite ? "on" : ""} onClick={() => setSatellite(true)}>Satellite</button>

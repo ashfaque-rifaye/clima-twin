@@ -24,6 +24,8 @@ class PointResponse(BaseModel):
     heat: dict | None = None
     air: dict | None = None
     flood: dict | None = None
+    elevation_m: float | None = None
+    vulnerability: dict | None = None
     prediction: str | None = None
     source: str = "sample"
 
@@ -34,6 +36,8 @@ def point(lat: float, lng: float):
     rt = realtime_point(lat, lng)
     w, a, fc = rt.get("weather"), rt.get("air"), rt.get("forecast") or []
     live = rt.get("live", False)
+    elev = rt.get("elevation")
+    area = rt.get("name") or cell.get("name") or "this area"
 
     heat = {
         "feels_like_c": (w or {}).get("feels_like_c") if live else cell.get("feels_like_c"),
@@ -49,26 +53,43 @@ def point(lat: float, lng: float):
     }
 
     rain = max([(h.get("rain_prob") or 0) for h in fc], default=((w or {}).get("rain_prob") or 0))
-    score = min(1.0, _FLOOD_BASE.get(cell.get("flood_risk"), 0.3) * 0.6 + (rain / 100) * 0.6)
+    if elev is not None:
+        base = 0.85 if elev < 4 else 0.6 if elev < 10 else 0.35 if elev < 20 else 0.15
+        basis = f"elevation {elev:.0f} m + {rain}% rain forecast"
+    else:
+        base = _FLOOD_BASE.get(cell.get("flood_risk"), 0.3)
+        basis = "rainfall forecast + terrain"
+    score = min(1.0, base * 0.6 + (rain / 100) * 0.6)
     flood = {
         "risk": "high" if score >= 0.66 else "medium" if score >= 0.4 else "low",
         "rain_prob": rain,
-        "basis": "rainfall forecast + terrain",
+        "basis": basis,
     }
 
     prediction = None
     if gemini_available() and live:
         peak = max([(h.get("feels_like_c") or 0) for h in fc], default=(heat["feels_like_c"] or 0))
         prediction = generate(
-            f"Location: {cell.get('name', 'this area')} in Chennai. Right now: feels-like "
+            f"Location: {area} in Chennai (elevation {elev} m). Right now: feels-like "
             f"{heat['feels_like_c']}C, AQI {air['aqi']} ({air.get('category')}), rain chance {rain}%. "
             f"Next 8h feels-like peaks around {peak}C. In 2 short sentences, predict how heat, air and "
             f"flood risk will change over the next few hours and the single best action to take. "
             f"Plain English, no markdown."
         )
 
+    foot = cell.get("bus_commuters_daily", 0)
+    vulnerability = {
+        "ndvi": cell.get("ndvi"),
+        "green_cover_pct": cell.get("green_cover_pct"),
+        "commuter_footfall": "High" if foot >= 1500 else "Medium" if foot >= 900 else "Low",
+        "elderly_pct": cell.get("elderly_pct"),
+        "population": cell.get("population"),
+        "data_blind_spot": cell.get("data_density") == "low",
+    }
+
     return PointResponse(
-        lat=lat, lng=lng, area_name=cell.get("name"), live=live,
-        heat=heat, air=air, flood=flood, prediction=prediction,
+        lat=lat, lng=lng, area_name=area, live=live,
+        heat=heat, air=air, flood=flood, elevation_m=elev,
+        vulnerability=vulnerability, prediction=prediction,
         source="live" if live else "sample",
     )

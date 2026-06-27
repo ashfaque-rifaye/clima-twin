@@ -6,14 +6,28 @@ import type { Hotspot } from "./api";
 const CHENNAI = { lat: 13.06, lng: 80.24 };
 
 const RAMP: Record<string, string[]> = {
-  heat: ["#33c08a", "#f6c453", "#ef6f3c", "#e23b3b"],
+  heat: ["#33c08a", "#f6c453", "#ff8a3c", "#ff3b30"],
   flood: ["#7fe0ff", "#5bd0ff", "#2b8bff", "#1a5fd0"],
-  air: ["#7ed6a8", "#cdb4ff", "#8c5cff", "#6a2fe0"],
+  air: ["#7ed6a8", "#cdb4ff", "#9b6bff", "#7c3bff"],
 };
 const ramp = (h: string, s: number) => {
   const r = RAMP[h] ?? RAMP.heat;
   return r[s >= 0.7 ? 3 : s >= 0.55 ? 2 : s >= 0.4 ? 1 : 0];
 };
+
+const DARK: google.maps.MapTypeStyle[] = [
+  { elementType: "geometry", stylers: [{ color: "#0a121a" }] },
+  { elementType: "labels.text.stroke", stylers: [{ color: "#0a121a" }] },
+  { elementType: "labels.text.fill", stylers: [{ color: "#5f7180" }] },
+  { featureType: "poi", stylers: [{ visibility: "off" }] },
+  { featureType: "transit", stylers: [{ visibility: "off" }] },
+  { featureType: "road", elementType: "geometry", stylers: [{ color: "#16222e" }] },
+  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#1e3040" }] },
+  { featureType: "road", elementType: "labels", stylers: [{ visibility: "off" }] },
+  { featureType: "water", elementType: "geometry", stylers: [{ color: "#05203a" }] },
+  { featureType: "administrative", elementType: "geometry", stylers: [{ color: "#26333f" }] },
+  { featureType: "landscape", elementType: "geometry", stylers: [{ color: "#0c1620" }] },
+];
 
 function Overlays({ hazard, nodes, selected }: { hazard: string; nodes: Hotspot[]; selected: { lat: number; lng: number } | null }) {
   const map = useMap();
@@ -24,8 +38,14 @@ function Overlays({ hazard, nodes, selected }: { hazard: string; nodes: Hotspot[
     try {
       nodes.forEach((n) => {
         const col = ramp(hazard, n.priority_score);
-        circles.push(new google.maps.Circle({ map, center: { lat: n.lat, lng: n.lng }, radius: 1200 + n.priority_score * 1800, fillColor: col, fillOpacity: 0.2, strokeWeight: 0, clickable: false }));
-        circles.push(new google.maps.Circle({ map, center: { lat: n.lat, lng: n.lng }, radius: 450 + n.priority_score * 600, fillColor: col, fillOpacity: 0.42, strokeColor: "#ffffff", strokeOpacity: 0.7, strokeWeight: 1, clickable: false }));
+        const k = 0.6 + n.priority_score;
+        const layers: [number, number][] = [[2400 * k, 0.1], [1300 * k, 0.18], [600 * k, 0.5]];
+        layers.forEach(([radius, fillOpacity], i) => {
+          circles.push(new google.maps.Circle({
+            map, center: { lat: n.lat, lng: n.lng }, radius, fillColor: col, fillOpacity,
+            strokeColor: "#ffffff", strokeOpacity: i === 2 ? 0.6 : 0, strokeWeight: i === 2 ? 1 : 0, clickable: false,
+          }));
+        });
       });
     } catch (e) { console.warn("overlay error", e); }
     return () => circles.forEach((c) => { try { c.setMap(null); } catch { /* noop */ } });
@@ -57,6 +77,7 @@ export default function MapView({ apiKey, hazard, nodes, selected, onSelect }: P
           defaultCenter={CHENNAI}
           defaultZoom={12}
           mapTypeId={satellite ? "hybrid" : "roadmap"}
+          styles={satellite ? undefined : DARK}
           gestureHandling="greedy"
           disableDefaultUI
           clickableIcons={false}

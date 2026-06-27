@@ -85,6 +85,45 @@ def weather_forecast(lat: float, lng: float, hours: int = 8) -> list[dict]:
     return []
 
 
+def reverse_geocode(lat: float, lng: float) -> str | None:
+    """Exact locality/neighborhood name at the clicked coordinate."""
+    try:
+        r = httpx.get(
+            "https://maps.googleapis.com/maps/api/geocode/json",
+            params={"key": _key(), "latlng": f"{lat},{lng}"},
+            timeout=8,
+        )
+        if r.status_code == 200:
+            results = r.json().get("results") or []
+            for want in ("sublocality_level_1", "sublocality", "neighborhood", "locality"):
+                for res in results:
+                    for comp in res.get("address_components", []):
+                        if want in comp.get("types", []):
+                            return comp.get("long_name")
+            if results:
+                return (results[0].get("formatted_address") or "").split(",")[0] or None
+    except Exception:
+        pass
+    return None
+
+
+def elevation(lat: float, lng: float) -> float | None:
+    """Ground elevation (m) at the exact coordinate — drives flood risk."""
+    try:
+        r = httpx.get(
+            "https://maps.googleapis.com/maps/api/elevation/json",
+            params={"key": _key(), "locations": f"{lat},{lng}"},
+            timeout=8,
+        )
+        if r.status_code == 200:
+            res = r.json().get("results") or []
+            if res:
+                return res[0].get("elevation")
+    except Exception:
+        pass
+    return None
+
+
 def realtime_point(lat: float, lng: float) -> dict:
     ck = (round(lat, 3), round(lng, 3))
     now = time.time()
@@ -92,6 +131,13 @@ def realtime_point(lat: float, lng: float) -> dict:
         return _cache[ck][1]
     w = current_weather(lat, lng)
     a = current_air(lat, lng)
-    data = {"weather": w, "air": a, "forecast": weather_forecast(lat, lng), "live": bool(w or a)}
+    data = {
+        "weather": w,
+        "air": a,
+        "forecast": weather_forecast(lat, lng),
+        "name": reverse_geocode(lat, lng),
+        "elevation": elevation(lat, lng),
+        "live": bool(w or a),
+    }
     _cache[ck] = (now, data)
     return data

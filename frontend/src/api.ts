@@ -148,6 +148,15 @@ export interface PointData {
   heat?: { feels_like_c?: number; temp_c?: number; condition?: string; humidity?: number };
   air?: { aqi?: number; category?: string; dominant?: string; health?: string };
   flood?: { risk?: string; rain_prob?: number; basis?: string };
+  elevation_m?: number;
+  vulnerability?: {
+    ndvi?: number;
+    green_cover_pct?: number;
+    commuter_footfall?: string;
+    elderly_pct?: number;
+    population?: number;
+    data_blind_spot?: boolean;
+  };
   prediction?: string;
   source: string;
 }

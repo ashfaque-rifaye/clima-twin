@@ -46,8 +46,11 @@ export default function MapView({ apiKey, hazard, selected, onSelect }: Props) {
     mapRef.current = map;
     map.on("load", () => { setLoaded(true); map.resize(); });
     map.on("click", (e) => onSelectRef.current(e.lngLat.lat, e.lngLat.lng));
-    const t = setTimeout(() => map.resize(), 400);
-    return () => { clearTimeout(t); map.remove(); mapRef.current = null; };
+    // container often isn't sized at init in this layout -> force resize until tiles load
+    const ro = new ResizeObserver(() => map.resize());
+    ro.observe(ref.current);
+    const timers = [200, 600, 1200, 2500].map((d) => window.setTimeout(() => map.resize(), d));
+    return () => { ro.disconnect(); timers.forEach(clearTimeout); map.remove(); mapRef.current = null; };
   }, []);
 
   // hazard overlay: heat/flood -> heatmap layer; air -> Google AQ raster tiles

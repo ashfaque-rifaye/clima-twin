@@ -48,8 +48,7 @@ export default function MapView({ apiKey, hazard, selected, onSelect }: Props) {
     // transform change, so kick = resize + a 1px pan nudge to force tile loading.
     const kick = () => {
       map.resize();
-      map.panBy([0, 1], { animate: false });
-      map.panBy([0, -1], { animate: false });
+      map.setZoom(map.getZoom() + 0.0008); // tiny zoom change forces tile loading
     };
     map.on("load", () => { setLoaded(true); kick(); });
     map.on("click", (e) => onSelectRef.current(e.lngLat.lat, e.lngLat.lng));

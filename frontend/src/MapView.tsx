@@ -44,12 +44,18 @@ export default function MapView({ apiKey, hazard, selected, onSelect }: Props) {
       attributionControl: { compact: true },
     });
     mapRef.current = map;
-    map.on("load", () => { setLoaded(true); map.resize(); });
+    // container isn't sized at init in this layout AND tiles only load on a
+    // transform change, so kick = resize + a 1px pan nudge to force tile loading.
+    const kick = () => {
+      map.resize();
+      map.panBy([0, 1], { animate: false });
+      map.panBy([0, -1], { animate: false });
+    };
+    map.on("load", () => { setLoaded(true); kick(); });
     map.on("click", (e) => onSelectRef.current(e.lngLat.lat, e.lngLat.lng));
-    // container often isn't sized at init in this layout -> force resize until tiles load
-    const ro = new ResizeObserver(() => map.resize());
+    const ro = new ResizeObserver(kick);
     ro.observe(ref.current);
-    const timers = [200, 600, 1200, 2500].map((d) => window.setTimeout(() => map.resize(), d));
+    const timers = [200, 600, 1200, 2500].map((d) => window.setTimeout(kick, d));
     return () => { ro.disconnect(); timers.forEach(clearTimeout); map.remove(); mapRef.current = null; };
   }, []);
 

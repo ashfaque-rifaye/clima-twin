@@ -13,8 +13,8 @@ import {
 import { getGrid, type GridPoint } from "../../services/api";
 import { useClimaStore } from "../../store/useClimaStore";
 import { HAZARD_META } from "../hazards/hazardMeta";
-import { buildLayers } from "./layers";
-import { densify } from "./densify";
+import { buildLayers, type AirSeed } from "./layers";
+import { buildField } from "./field";
 import SelectedZoneCard from "./overlays/SelectedZoneCard";
 import Legend from "./overlays/Legend";
 import BasemapToggle from "./overlays/BasemapToggle";
@@ -109,11 +109,35 @@ export default function MapStage() {
     return () => cancelAnimationFrame(raf);
   }, [hazard, sim]);
 
-  const cells = useMemo(() => densify(grid), [grid]);
+  // georeferenced raster of the measured field (rebuilt only when data changes)
+  const field = useMemo(
+    () => (grid.length ? buildField(grid, HAZARD_META[hazard].colorRange) : null),
+    [grid, hazard],
+  );
+
+  // pollution-transport seeds: spawn where the AQI field is high, with a
+  // deterministic per-seed phase so the flow is continuous, not synchronized
+  const airSeeds = useMemo<AirSeed[]>(() => {
+    if (hazard !== "air" || !grid.length) return [];
+    return grid
+      .filter((p) => p.weight > 0.45)
+      .filter((_, i) => i % 2 === 0)
+      .slice(0, 260)
+      .map((p, i) => {
+        const h1 = Math.sin(i * 12.9898) * 43758.5453;
+        const h2 = Math.sin(i * 78.233) * 24634.6345;
+        return {
+          lng: p.lng + ((h1 - Math.floor(h1)) - 0.5) * 0.008,
+          lat: p.lat + ((h2 - Math.floor(h2)) - 0.5) * 0.008,
+          w: p.weight,
+          phase: (h1 - Math.floor(h1)),
+        };
+      });
+  }, [hazard, grid]);
 
   const layers = useMemo(
-    () => buildLayers({ hazard, grid, cells, hotspots, selected, time, ripple: !!sim }),
-    [hazard, grid, cells, hotspots, selected, time, sim],
+    () => buildLayers({ hazard, field, hotspots, airSeeds, selected, time, ripple: !!sim }),
+    [hazard, field, hotspots, airSeeds, selected, time, sim],
   );
 
   const onClick = (e: MapMouseEvent) => {

@@ -13,8 +13,7 @@ import {
 import { getGrid, type GridPoint } from "../../services/api";
 import { useClimaStore } from "../../store/useClimaStore";
 import { HAZARD_META } from "../hazards/hazardMeta";
-import { buildLayers, type AirSeed } from "./layers";
-import { buildField } from "./field";
+import { buildLayers, makeTileLayer, type AirSeed } from "./layers";
 import SelectedZoneCard from "./overlays/SelectedZoneCard";
 import Legend from "./overlays/Legend";
 import BasemapToggle from "./overlays/BasemapToggle";
@@ -75,6 +74,8 @@ function Camera() {
   return null;
 }
 
+const DEFAULT_ZOOM = 11;
+
 export default function MapStage() {
   const hazard = useClimaStore((s) => s.hazard);
   const basemap = useClimaStore((s) => s.basemap);
@@ -83,21 +84,26 @@ export default function MapStage() {
   const mapsKey = useClimaStore((s) => s.mapsKey);
   const select = useClimaStore((s) => s.select);
   const sim = useClimaStore((s) => s.sim);
+  const mix = useClimaStore((s) => s.mix);
 
   const [grid, setGrid] = useState<GridPoint[]>([]);
   const [time, setTime] = useState(0);
+  const [zoom, setZoom] = useState(DEFAULT_ZOOM);
 
+  // whole-city samples are needed ONLY to seed air-particle transport;
+  // every other visualization loads through the visible-tile pipeline
   useEffect(() => {
+    if (hazard !== "air") { setGrid([]); return; }
     let cancelled = false;
     getGrid(hazard)
       .then((r) => { if (!cancelled) setGrid(r.points); })
-      .catch(() => { if (!cancelled) setGrid(hotspots.map((n) => ({ lat: n.lat, lng: n.lng, weight: n.priority_score, name: n.name }))); });
+      .catch(() => { if (!cancelled) setGrid([]); });
     return () => { cancelled = true; };
-  }, [hazard, hotspots]);
+  }, [hazard]);
 
   // subtle animation — air particle flux and/or the cooling ripple after a sim
   useEffect(() => {
-    const animate = hazard === "air" || !!sim;
+    const animate = (hazard === "air" || !!sim) && zoom >= 10;
     if (!animate) { setTime(0); return; }
     let raf = 0;
     let last = performance.now();
@@ -107,13 +113,7 @@ export default function MapStage() {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [hazard, sim]);
-
-  // georeferenced raster of the measured field (rebuilt only when data changes)
-  const field = useMemo(
-    () => (grid.length ? buildField(grid, HAZARD_META[hazard].colorRange) : null),
-    [grid, hazard],
-  );
+  }, [hazard, sim, zoom]);
 
   // pollution-transport seeds: spawn where the AQI field is high, with a
   // deterministic per-seed phase so the flow is continuous, not synchronized
@@ -135,9 +135,18 @@ export default function MapStage() {
       });
   }, [hazard, grid]);
 
+  // multi-resolution tile pipeline: stable per hazard so the tile cache
+  // survives camera moves; only a hazard switch refetches
+  const tileLayer = useMemo(() => makeTileLayer(hazard), [hazard]);
+
+  const plannedCount = useMemo(
+    () => Object.values(mix).reduce((a, b) => a + (b || 0), 0),
+    [mix],
+  );
+
   const layers = useMemo(
-    () => buildLayers({ hazard, field, hotspots, airSeeds, selected, time, ripple: !!sim }),
-    [hazard, field, hotspots, airSeeds, selected, time, sim],
+    () => [tileLayer, ...buildLayers({ hazard, zoom, hotspots, airSeeds, selected, time, ripple: !!sim, plannedCount })],
+    [tileLayer, hazard, zoom, hotspots, airSeeds, selected, time, sim, plannedCount],
   );
 
   const onClick = (e: MapMouseEvent) => {
@@ -164,7 +173,7 @@ export default function MapStage() {
           className="map-canvas"
           mapId={MAP_ID}
           defaultCenter={CHENNAI}
-          defaultZoom={11}
+          defaultZoom={DEFAULT_ZOOM}
           defaultTilt={hazard === "heat" ? 47 : 0}
           defaultHeading={-14}
           colorScheme={ColorScheme.DARK}
@@ -173,6 +182,7 @@ export default function MapStage() {
           gestureHandling="greedy"
           disableDefaultUI
           onClick={onClick}
+          onCameraChanged={(e) => setZoom(e.detail.zoom)}
         >
           <DeckOverlay layers={layers} />
           <MapReady />

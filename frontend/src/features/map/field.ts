@@ -19,11 +19,6 @@ export interface FieldImage {
   bounds: Bounds;
 }
 
-// Raster resolution: ~100 m/px over greater Chennai. High enough that street
-// zoom shows a smooth gradient, low enough to rebuild in a few ms.
-const RASTER_W = 224;
-const RASTER_H = 416;
-
 // The overlay must never hide the geography underneath.
 const MAX_ALPHA = 0.62;
 
@@ -138,53 +133,75 @@ export function blur(buf: Float32Array, w: number, h: number): Float32Array {
   return out;
 }
 
-/** Build the hazard raster. Returns null without a DOM (tests) or data. */
-export function buildField(points: GridPoint[], ramp: RGBA[] | number[][]): FieldImage | null {
-  if (!points.length || typeof document === "undefined") return null;
+/**
+ * Diverging anomaly colour: value is a rank (0..1) whose regional median is
+ * 0.5. Near-median → fully transparent (no city-wide tint); cool anomalies →
+ * soft teal; hot anomalies → amber→red. Exported for tests.
+ */
+export function anomalyColor(v: number): RGBA {
+  const t = Math.min(1, Math.max(-1, (v - 0.5) * 2));
+  if (Math.abs(t) < 0.12) return [0, 0, 0, 0]; // dead zone at the median
+  if (t < 0) {
+    const k = (Math.abs(t) - 0.12) / 0.88;
+    return [24, 170, 190, Math.round(90 * k)];
+  }
+  const k = (t - 0.12) / 0.88;
+  const ramp: RGBA[] = [[246, 196, 83, 0], [255, 138, 60, 150], [255, 59, 48, 215], [122, 0, 16, 240]];
+  return rampColor(k, ramp);
+}
 
-  const lats = points.map((p) => p.lat), lngs = points.map((p) => p.lng);
-  const bounds: Bounds = [
-    Math.min(...lngs), Math.min(...lats), Math.max(...lngs), Math.max(...lats),
-  ];
-  const [west, south, east, north] = bounds;
-  if (east - west < 1e-6 || north - south < 1e-6) return null;
+export type FieldMode = "sequential" | "anomaly";
 
-  const grid = toSampleGrid(points);
+/**
+ * Rasterize a tile: cells (tile + margin) → smooth colorized canvas clipped
+ * to `tileBounds`. `extent` = full dataset extent (edge fades happen there,
+ * never at tile seams). Returns null without a DOM (tests) or data.
+ */
+export function buildTileRaster(
+  points: GridPoint[] | { lat: number; lng: number; weight: number }[],
+  tileBounds: Bounds,
+  extent: Bounds,
+  ramp: RGBA[] | number[][],
+  mode: FieldMode = "sequential",
+  res = 160,
+): FieldImage | null {
+  if (points.length < 3 || typeof document === "undefined") return null;
+  const [west, south, east, north] = tileBounds;
+  if (east - west < 1e-9 || north - south < 1e-9) return null;
 
-  // 1. interpolate onto the raster
-  let values: Float32Array = new Float32Array(RASTER_W * RASTER_H);
-  for (let y = 0; y < RASTER_H; y++) {
-    const lat = north - ((y + 0.5) / RASTER_H) * (north - south);
-    for (let x = 0; x < RASTER_W; x++) {
-      const lng = west + ((x + 0.5) / RASTER_W) * (east - west);
-      values[y * RASTER_W + x] = grid
+  const grid = toSampleGrid(points as GridPoint[]);
+
+  let values: Float32Array = new Float32Array(res * res);
+  for (let y = 0; y < res; y++) {
+    const lat = north - ((y + 0.5) / res) * (north - south);
+    for (let x = 0; x < res; x++) {
+      const lng = west + ((x + 0.5) / res) * (east - west);
+      values[y * res + x] = grid
         ? sampleBilinear(grid, lat, lng)
-        : sampleIDW(points, lat, lng);
+        : sampleIDW(points as GridPoint[], lat, lng);
     }
   }
+  values = blur(values, res, res);
 
-  // 2. gaussian smoothing (kills any remaining lattice creases)
-  values = blur(values, RASTER_W, RASTER_H);
-
-  // 3. colorize + mask
   const canvas = document.createElement("canvas");
-  canvas.width = RASTER_W;
-  canvas.height = RASTER_H;
+  canvas.width = res;
+  canvas.height = res;
   const ctx = canvas.getContext("2d");
   if (!ctx) return null;
-  const img = ctx.createImageData(RASTER_W, RASTER_H);
-  for (let y = 0; y < RASTER_H; y++) {
-    const lat = north - ((y + 0.5) / RASTER_H) * (north - south);
-    for (let x = 0; x < RASTER_W; x++) {
-      const lng = west + ((x + 0.5) / RASTER_W) * (east - west);
-      const [r, g, b, a] = rampColor(values[y * RASTER_W + x], ramp);
-      const o = (y * RASTER_W + x) * 4;
+  const img = ctx.createImageData(res, res);
+  for (let y = 0; y < res; y++) {
+    const lat = north - ((y + 0.5) / res) * (north - south);
+    for (let x = 0; x < res; x++) {
+      const lng = west + ((x + 0.5) / res) * (east - west);
+      const v = values[y * res + x];
+      const [r, g, b, a] = mode === "anomaly" ? anomalyColor(v) : rampColor(v, ramp);
+      const o = (y * res + x) * 4;
       img.data[o] = r;
       img.data[o + 1] = g;
       img.data[o + 2] = b;
-      img.data[o + 3] = Math.round(a * MAX_ALPHA * maskAt(lat, lng, bounds));
+      img.data[o + 3] = Math.round(a * MAX_ALPHA * maskAt(lat, lng, extent));
     }
   }
   ctx.putImageData(img, 0, 0);
-  return { canvas, bounds };
+  return { canvas, bounds: tileBounds };
 }

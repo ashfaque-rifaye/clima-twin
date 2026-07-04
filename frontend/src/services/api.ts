@@ -132,6 +132,33 @@ export interface GridPoint {
 }
 export interface GridResp { hazard: string; source?: string; points: GridPoint[]; }
 
+/* ---- multi-resolution tiles ---- */
+export type TileBand = "country" | "state" | "city" | "block" | "street";
+export interface TileCell { lat: number; lng: number; weight: number }
+export interface TileSummary { name: string; lat: number; lng: number; value: number }
+export interface TileRiver { name: string; path: [number, number][] }
+export interface TileAsset { name: string; kind: string; lat: number; lng: number }
+export interface TileResp {
+  band: TileBand;
+  z: number;
+  x: number;
+  y: number;
+  bounds: [number, number, number, number];
+  extent: [number, number, number, number] | null;
+  source: string;
+  cells: TileCell[];
+  summaries: TileSummary[];
+  rivers: TileRiver[];
+  assets: TileAsset[];
+}
+
+/** Tile fetch: no retry/timeout wrapper — the TileLayer aborts + retries. */
+export async function getTile(hazard: string, z: number, x: number, y: number, signal?: AbortSignal): Promise<TileResp> {
+  const r = await fetch(`${BASE}/tiles/${hazard}/${z}/${x}/${y}`, { headers: headers(), signal });
+  if (!r.ok) throw new Error(`tile ${z}/${x}/${y} ${r.status}`);
+  return r.json() as Promise<TileResp>;
+}
+
 /* ---------------- endpoints ---------------- */
 export const getConfig = () => getJSON<AppConfig>("/config");
 export const getHotspots = (hazard: string, limit = 8) =>

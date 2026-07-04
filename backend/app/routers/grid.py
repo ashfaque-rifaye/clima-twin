@@ -54,11 +54,13 @@ def _idw(lat: float, lng: float, anchors: list[dict]) -> float:
     return num / den if den else 0.0
 
 
-@router.get("/grid", response_model=GridResponse)
-async def grid(
-    hazard: Hazard = "heat",
-    n: int = Query(default=GRID_SIZE, ge=2, le=GRID_SIZE),
-):
+async def calibrated_grid(hazard: str, n: int = GRID_SIZE) -> tuple[list[dict], str]:
+    """Full-city lattice with live-calibrated, rank-normalised weights.
+
+    Shared by GET /grid (whole-city consumers, e.g. air-particle seeds) and
+    the tile engine (which slices it per tile). Falls back to the pure
+    urban-form model when live anchors are unavailable.
+    """
     points = grid_points(hazard, n)
     source = "synthetic"
 
@@ -75,6 +77,15 @@ async def grid(
         _stretch(points)
         source = "live+model"
 
+    return points, source
+
+
+@router.get("/grid", response_model=GridResponse)
+async def grid(
+    hazard: Hazard = "heat",
+    n: int = Query(default=GRID_SIZE, ge=2, le=GRID_SIZE),
+):
+    points, source = await calibrated_grid(hazard, n)
     return GridResponse(hazard=hazard, points=points, source=source)
 
 

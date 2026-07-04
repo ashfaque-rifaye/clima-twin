@@ -8,10 +8,11 @@
 // - all geometry is geographic (meters/degrees) so zoom adds detail, never
 //   repetition; pixel clamps exist only to keep annotations legible.
 import type { Layer } from "@deck.gl/core";
+import { TileLayer } from "@deck.gl/geo-layers";
 import { BitmapLayer, IconLayer, PathLayer, PolygonLayer, ScatterplotLayer, TextLayer } from "@deck.gl/layers";
 import { HAZARD_META, type HazardId } from "../hazards/hazardMeta";
-import type { Hotspot } from "../../services/api";
-import type { FieldImage } from "./field";
+import { getTile, type Hotspot, type TileResp } from "../../services/api";
+import { buildTileRaster, type FieldImage } from "./field";
 import {
   FRAGMENTATION_POINTS, GREEN_AREAS, GREEN_CORRIDORS, SEA_BREEZE, WATERWAYS, type LngLat,
 } from "./geo";
@@ -81,27 +82,152 @@ export interface AirSeed { lng: number; lat: number; w: number; phase: number }
 
 export interface LayerInput {
   hazard: HazardId;
-  field: FieldImage | null;
+  zoom: number; // controls which bands/annotations exist at all
   hotspots: Hotspot[];
   airSeeds: AirSeed[];
   selected: { lat: number; lng: number } | null;
   time: number; // 0..1 loop driving particle transport + the cooling ripple
   ripple?: boolean;
+  plannedCount?: number; // interventions placed in the simulator (street band)
 }
 
-/* ---------------- shared sub-builders ---------------- */
+/* ---------------- multi-resolution tile layer ---------------- */
 
-function fieldLayer(hazard: HazardId, field: FieldImage | null): Layer[] {
-  if (!field) return [];
-  return [
-    new BitmapLayer({
-      id: `${hazard}-field-raster`,
-      image: field.canvas,
-      bounds: field.bounds,
-      pickable: false,
-      opacity: 1, // alpha is baked into the raster (land-masked, capped)
-    }),
-  ];
+type TileContent = TileResp & { raster: FieldImage | null };
+
+const INDIA_EXTENT: [number, number, number, number] = [68, 6, 98, 37];
+
+/**
+ * The core of the multi-resolution engine: one TileLayer per hazard.
+ * deck.gl fetches only visible XYZ tiles, aborts off-screen requests,
+ * caches ~320 tiles and unloads evictions; the server picks the dataset
+ * band by zoom. Rasterization happens once per tile inside getTileData.
+ */
+export function makeTileLayer(hazard: HazardId): Layer {
+  const meta = HAZARD_META[hazard];
+  const [r, g, b] = meta.rgb;
+
+  return new TileLayer<TileContent>({
+    id: `${hazard}-tiles`,
+    minZoom: 4,
+    maxZoom: 16, // deeper zooms overzoom the street-band tiles
+    extent: INDIA_EXTENT,
+    tileSize: 256,
+    maxCacheSize: 320,
+    maxRequests: 8,
+    async getTileData({ index, signal }) {
+      const t = await getTile(hazard, index.z, index.x, index.y, signal ?? undefined);
+      let raster: FieldImage | null = null;
+      // green communicates through polygons/corridors, not a raster wash
+      if (t.cells.length && t.extent && hazard !== "green") {
+        raster = buildTileRaster(
+          t.cells,
+          t.bounds,
+          t.extent,
+          meta.colorRange,
+          hazard === "heat" ? "anomaly" : "sequential",
+        );
+      }
+      return { ...t, raster };
+    },
+    renderSubLayers: (props) => {
+      const tile = props.data as TileContent | undefined;
+      if (!tile) return null;
+      const layers: Layer[] = [];
+      const sid = `${props.id}-${tile.z}-${tile.x}-${tile.y}`;
+
+      if (tile.raster) {
+        layers.push(new BitmapLayer({
+          id: `${sid}-raster`,
+          image: tile.raster.canvas,
+          bounds: tile.raster.bounds,
+          pickable: false,
+          opacity: 1, // alpha baked in (land mask + cap)
+        }));
+      }
+
+      // country/state: aggregated summaries — graduated symbols + names
+      if (tile.summaries.length) {
+        const country = tile.band === "country";
+        layers.push(
+          new ScatterplotLayer({
+            id: `${sid}-summary-halo`,
+            data: tile.summaries,
+            getPosition: (d) => [d.lng, d.lat],
+            getRadius: (d) => (country ? 26000 + d.value * 68000 : 7000 + d.value * 20000),
+            radiusUnits: "meters",
+            getFillColor: (d) => [r, g, b, Math.round(28 + d.value * 92)] as RGBA,
+            stroked: true,
+            getLineColor: [r, g, b, 190] as RGBA,
+            lineWidthMinPixels: 1,
+          }),
+          new TextLayer({
+            id: `${sid}-summary-lbl`,
+            data: tile.summaries,
+            getPosition: (d) => [d.lng, d.lat],
+            getText: (d) => `${d.name}\n${Math.round(d.value * 100)}`,
+            getSize: country ? 12 : 11,
+            getColor: [235, 244, 252, 240],
+            background: true,
+            getBackgroundColor: [7, 14, 20, 175],
+            backgroundPadding: [4, 2],
+            fontFamily: "Roboto Mono, monospace",
+          }),
+        );
+      }
+
+      // state band: major rivers
+      if (tile.rivers.length) {
+        layers.push(new PathLayer({
+          id: `${sid}-rivers`,
+          data: tile.rivers,
+          getPath: (d) => d.path,
+          getColor: [72, 199, 255, 175] as RGBA,
+          getWidth: 1400,
+          widthUnits: "meters",
+          widthMinPixels: 1.2,
+          widthMaxPixels: 4,
+          capRounded: true,
+          jointRounded: true,
+        }));
+      }
+
+      // block/street bands: real civic assets (exposure receptors)
+      if (tile.assets.length) {
+        layers.push(
+          new ScatterplotLayer({
+            id: `${sid}-assets`,
+            data: tile.assets,
+            getPosition: (d) => [d.lng, d.lat],
+            getRadius: 26,
+            radiusUnits: "meters",
+            radiusMinPixels: 2.4,
+            radiusMaxPixels: 5,
+            getFillColor: [235, 244, 252, 235] as RGBA,
+            stroked: true,
+            getLineColor: [r, g, b, 235] as RGBA,
+            lineWidthMinPixels: 1.4,
+          }),
+          new TextLayer({
+            id: `${sid}-asset-lbl`,
+            data: tile.assets,
+            getPosition: (d) => [d.lng, d.lat],
+            getText: (d) => d.name,
+            getSize: 10,
+            getColor: [220, 232, 244, 235],
+            getTextAnchor: "start",
+            getPixelOffset: [8, 0],
+            background: true,
+            getBackgroundColor: [7, 14, 20, 185],
+            backgroundPadding: [4, 2],
+            fontFamily: "Roboto Mono, monospace",
+          }),
+        );
+      }
+
+      return layers;
+    },
+  });
 }
 
 function hotspotLayers(hazard: HazardId, hotspots: Hotspot[]): Layer[] {
@@ -333,20 +459,63 @@ function greenLayers(): Layer[] {
 
 /* ---------------- main entry ---------------- */
 
-export function buildLayers({ hazard, field, hotspots, airSeeds, selected, time, ripple }: LayerInput): Layer[] {
+// zoom gates: annotations exist only at the scales where they carry meaning
+const CITY_MIN_ZOOM = 10;   // hotspots, channels, parks, particles
+const STREET_MIN_ZOOM = 15; // individual planned interventions
+
+export function buildLayers({ hazard, zoom, hotspots, airSeeds, selected, time, ripple, plannedCount = 0 }: LayerInput): Layer[] {
   const [r, g, b] = HAZARD_META[hazard].rgb;
   const layers: Layer[] = [];
+  const cityScale = zoom >= CITY_MIN_ZOOM;
 
-  // 1. continuous measured field (LST / flood exposure / AQI), land-masked
-  if (hazard !== "green") layers.push(...fieldLayer(hazard, field));
+  // 1. hazard-specific real geometry — city scale and below only
+  if (cityScale) {
+    if (hazard === "flood") layers.push(...floodLayers());
+    if (hazard === "air") layers.push(...airLayers(airSeeds, time));
+    if (hazard === "green") layers.push(...greenLayers());
+  }
 
-  // 2. hazard-specific real geometry
-  if (hazard === "flood") layers.push(...floodLayers());
-  if (hazard === "air") layers.push(...airLayers(airSeeds, time));
-  if (hazard === "green") layers.push(...greenLayers());
+  // 2. equity-weighted priority hotspots — never at national/state overview
+  if (cityScale) layers.push(...hotspotLayers(hazard, hotspots));
 
-  // 3. equity-weighted priority hotspots (from /hotspots)
-  layers.push(...hotspotLayers(hazard, hotspots));
+  // 3. street band: the intervention-simulation domain — planned placements
+  //    around the selected site (from the user's simulator mix)
+  if (zoom >= STREET_MIN_ZOOM && selected && plannedCount > 0) {
+    const n = Math.min(plannedCount, 60);
+    const placements = Array.from({ length: n }, (_, i) => {
+      const a = i * 2.39996; // golden-angle spiral: even, deterministic
+      const rad = 0.0004 + 0.0013 * Math.sqrt(i / n);
+      return { lng: selected.lng + Math.cos(a) * rad, lat: selected.lat + Math.sin(a) * rad * 0.92 };
+    });
+    layers.push(
+      new ScatterplotLayer({
+        id: "planned-interventions",
+        data: placements,
+        getPosition: (d) => [d.lng, d.lat],
+        getRadius: 5,
+        radiusUnits: "meters",
+        radiusMinPixels: 2.5,
+        radiusMaxPixels: 6,
+        getFillColor: [110, 231, 183, 235] as RGBA,
+        stroked: true,
+        getLineColor: [6, 40, 26, 200] as RGBA,
+        lineWidthMinPixels: 1,
+      }),
+      new TextLayer({
+        id: "planned-interventions-lbl",
+        data: [selected],
+        getPosition: (d) => [d.lng, d.lat],
+        getText: () => `${plannedCount} planned placements (simulation)`,
+        getSize: 10.5,
+        getColor: [205, 250, 230, 240],
+        getPixelOffset: [0, -26],
+        background: true,
+        getBackgroundColor: [6, 20, 14, 195],
+        backgroundPadding: [5, 3],
+        fontFamily: "Roboto Mono, monospace",
+      }),
+    );
+  }
 
   // 4. cooling ripple after a simulation (event-driven, meters-based)
   if (ripple && selected) {

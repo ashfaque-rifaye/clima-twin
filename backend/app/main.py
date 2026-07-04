@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from . import hardening
 from .config import settings
 from .gemini import gemini_available
-from .routers import microclimate, simulate, recommend, proposal, hotspots, ask, point, grid
+from .routers import microclimate, simulate, recommend, proposal, hotspots, ask, point, grid, tiles
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -79,6 +79,7 @@ app.include_router(hotspots.router)
 app.include_router(ask.router)
 app.include_router(point.router)
 app.include_router(grid.router)
+app.include_router(tiles.router)
 
 # Serve the built frontend (present in the container image at /app/static).
 # Mounted last so API routes above take precedence; skipped in local dev.

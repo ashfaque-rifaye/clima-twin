@@ -49,7 +49,9 @@ interface ClimaState {
   selected: { lat: number; lng: number } | null;
   point: PointData | null;
   pointBusy: boolean;
+  pointError: boolean;
   select: (lat: number, lng: number) => Promise<void>;
+  retryPoint: () => void;
   clearSelection: () => void;
 
   /* recommendation */
@@ -64,11 +66,13 @@ interface ClimaState {
   loadRecoIntoMix: () => void;
   sim: SimResult | null;
   simBusy: boolean;
+  simError: boolean;
   runSim: () => Promise<void>;
 
   /* proposal */
   prop: ProposalResp | null;
   propBusy: boolean;
+  propError: boolean;
   runProposal: () => Promise<void>;
   closeProposal: () => void;
 
@@ -129,35 +133,47 @@ export const useClimaStore = create<ClimaState>((set, get) => ({
   selected: null,
   point: null,
   pointBusy: false,
+  pointError: false,
   async select(lat, lng) {
     set({
       selected: { lat, lng },
       pointBusy: true,
+      pointError: false,
       point: { lat, lng, area_name: "Selected Chennai cell", live: false, source: "loading", vulnerability: {} },
       reco: null,
       sim: null,
+      simError: false,
       prop: null,
+      propError: false,
       mix: {},
     });
+    const stillCurrent = () => get().selected?.lat === lat && get().selected?.lng === lng;
     // live point
     try {
-      set({ point: await getPoint(lat, lng) });
+      const p = await getPoint(lat, lng);
+      if (stillCurrent()) set({ point: p, pointError: false });
     } catch {
-      /* keep provisional */
+      // keep the provisional card, but tell the user live data didn't arrive
+      if (stillCurrent()) set({ pointError: true });
     } finally {
-      set({ pointBusy: false });
+      if (stillCurrent()) set({ pointBusy: false });
     }
     // recommendation (parallel, non-blocking)
     const { hazard, budget } = get();
     set({ recoBusy: true, reco: null });
     apiRecommend(lat, lng, HAZARD_META[hazard].goal, budget)
       .then((reco) => {
-        if (get().selected?.lat === lat && get().selected?.lng === lng) set({ reco });
+        if (stillCurrent()) set({ reco });
       })
-      .catch(() => set({ reco: null }))
-      .finally(() => set({ recoBusy: false }));
+      .catch(() => { if (stillCurrent()) set({ reco: null }); })
+      .finally(() => { if (stillCurrent()) set({ recoBusy: false }); });
   },
-  clearSelection: () => set({ selected: null, point: null, reco: null, sim: null, prop: null, mix: {} }),
+  retryPoint: () => {
+    const s = get().selected;
+    if (s) void get().select(s.lat, s.lng);
+  },
+  clearSelection: () =>
+    set({ selected: null, point: null, pointError: false, reco: null, sim: null, simError: false, prop: null, propError: false, mix: {} }),
 
   reco: null,
   recoBusy: false,
@@ -179,16 +195,17 @@ export const useClimaStore = create<ClimaState>((set, get) => ({
   },
   sim: null,
   simBusy: false,
+  simError: false,
   async runSim() {
     const { selected, mix, budget } = get();
     if (!selected) return;
     const interventions = mixToInterventions(mix);
     if (!interventions.length) return;
-    set({ simBusy: true });
+    set({ simBusy: true, simError: false });
     try {
       set({ sim: await apiSimulate(selected.lat, selected.lng, interventions, budget) });
     } catch {
-      set({ sim: null });
+      set({ sim: null, simError: true });
     } finally {
       set({ simBusy: false });
     }
@@ -196,10 +213,11 @@ export const useClimaStore = create<ClimaState>((set, get) => ({
 
   prop: null,
   propBusy: false,
+  propError: false,
   async runProposal() {
     const { selected, point, mix, sim, reco, hazard } = get();
     if (!selected) return;
-    set({ propBusy: true });
+    set({ propBusy: true, propError: false });
     try {
       const interventions = mixToInterventions(mix);
       set({
@@ -212,7 +230,7 @@ export const useClimaStore = create<ClimaState>((set, get) => ({
         }),
       });
     } catch {
-      set({ prop: null });
+      set({ prop: null, propError: true });
     } finally {
       set({ propBusy: false });
     }

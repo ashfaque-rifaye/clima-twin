@@ -23,21 +23,38 @@ function headers(json = false): HeadersInit {
   return h;
 }
 
-async function getJSON<T>(path: string): Promise<T> {
-  const r = await fetch(`${BASE}${path}`, { headers: headers() });
-  if (!r.ok) throw new Error(`${path} ${r.status}`);
-  return r.json() as Promise<T>;
+const GET_TIMEOUT_MS = 15_000;
+const POST_TIMEOUT_MS = 45_000; // AI endpoints (Gemini) can be slow
+
+async function request<T>(path: string, init: RequestInit, timeoutMs: number, retries: number): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const r = await fetch(`${BASE}${path}`, { ...init, signal: ctrl.signal });
+      if (r.ok) return (await r.json()) as T;
+      lastErr = new Error(`${path} ${r.status}`);
+      if (r.status < 500) break; // 4xx won't improve on retry
+    } catch (e) {
+      lastErr = e; // network error / timeout — retry if allowed
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw lastErr;
 }
 
-async function postJSON<T>(path: string, body: unknown): Promise<T> {
-  const r = await fetch(`${BASE}${path}`, {
-    method: "POST",
-    headers: headers(true),
-    body: JSON.stringify(body),
-  });
-  if (!r.ok) throw new Error(`${path} ${r.status}`);
-  return r.json() as Promise<T>;
-}
+const getJSON = <T,>(path: string) =>
+  request<T>(path, { headers: headers() }, GET_TIMEOUT_MS, 1);
+
+const postJSON = <T,>(path: string, body: unknown) =>
+  request<T>(
+    path,
+    { method: "POST", headers: headers(true), body: JSON.stringify(body) },
+    POST_TIMEOUT_MS,
+    0, // POSTs are not retried automatically — the user can retry from the UI
+  );
 
 /* ---------------- types ---------------- */
 export interface Hotspot {

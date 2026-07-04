@@ -13,6 +13,7 @@ export default function SimulateCard() {
   const setBudget = useClimaStore((s) => s.setBudget);
   const sim = useClimaStore((s) => s.sim);
   const simBusy = useClimaStore((s) => s.simBusy);
+  const simError = useClimaStore((s) => s.simError);
   const runSim = useClimaStore((s) => s.runSim);
   const reco = useClimaStore((s) => s.reco);
   const loadRecoIntoMix = useClimaStore((s) => s.loadRecoIntoMix);
@@ -56,6 +57,9 @@ export default function SimulateCard() {
       <button className="primary-btn sim-btn" onClick={runSim} disabled={simBusy || !count}>
         {simBusy ? "Simulating…" : meta.simulateVerb}
       </button>
+      {simError && !simBusy && (
+        <div className="inline-err">Simulation failed — <button onClick={runSim}>try again</button></div>
+      )}
 
       {sim && (
         <div className="sim-res">

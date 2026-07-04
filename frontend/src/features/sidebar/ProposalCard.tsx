@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useClimaStore } from "../../store/useClimaStore";
-import { fmtINR, fmtInt } from "../../lib/format";
+import { fmtINR, fmtInt, mdToHtml } from "../../lib/format";
 
 function download(name: string, text: string) {
   const blob = new Blob([text], { type: "text/markdown" });
@@ -24,6 +24,7 @@ export default function ProposalCard() {
   const runAsk = useClimaStore((s) => s.runAsk);
   const clearAsk = useClimaStore((s) => s.clearAsk);
 
+  const propError = useClimaStore((s) => s.propError);
   const [q, setQ] = useState("");
   const effect = prop ? undefined : reco?.effect;
   const body = prop?.markdown
@@ -41,7 +42,10 @@ export default function ProposalCard() {
       </div>
 
       {point?.prediction && !prop && <p className="ai-fore"><b>Forecast.</b> {point.prediction}</p>}
-      <div className="ai-body">{body}</div>
+      {prop
+        ? <div className="ai-body ai-md" dangerouslySetInnerHTML={{ __html: mdToHtml(prop.markdown) }} />
+        : <div className="ai-body">{body}</div>}
+      {propError && <div className="inline-err">Proposal generation failed — <button onClick={runProposal}>try again</button></div>}
 
       {effect && (
         <div className="ai-chips">

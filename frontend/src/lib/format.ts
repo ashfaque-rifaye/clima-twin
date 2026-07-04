@@ -34,3 +34,34 @@ export const aqiBand = aqiClass;
  */
 export const diurnalDeltaC = (h: number): number =>
   +(Math.cos(((h - 15) / 24) * Math.PI * 2) * 3.5).toFixed(1);
+
+const escapeHtml = (s: string): string =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+/**
+ * Markdown-lite → HTML for AI-generated proposal text (headings, bold,
+ * bullets, paragraphs). Input is HTML-escaped first, so the output is safe
+ * to inject; anything fancier stays plain text.
+ */
+export function mdToHtml(md: string): string {
+  const blocks = escapeHtml(md.trim()).split(/\n{2,}/);
+  return blocks
+    .map((block) => {
+      const lines = block.split("\n");
+      if (lines.every((l) => /^\s*[-*] /.test(l))) {
+        return `<ul>${lines.map((l) => `<li>${inline(l.replace(/^\s*[-*] /, ""))}</li>`).join("")}</ul>`;
+      }
+      return lines
+        .map((l) => {
+          const h = /^(#{1,4}) (.*)$/.exec(l);
+          if (h) return `<h${h[1].length + 2}>${inline(h[2])}</h${h[1].length + 2}>`;
+          if (/^\s*[-*] /.test(l)) return `<ul><li>${inline(l.replace(/^\s*[-*] /, ""))}</li></ul>`;
+          return `<p>${inline(l)}</p>`;
+        })
+        .join("");
+    })
+    .join("");
+}
+
+const inline = (s: string): string =>
+  s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>").replace(/\*([^*]+)\*/g, "<em>$1</em>");

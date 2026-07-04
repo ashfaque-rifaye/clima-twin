@@ -7,6 +7,8 @@ export default function MicroclimateCard() {
   const hazard = useClimaStore((s) => s.hazard);
   const hour = useClimaStore((s) => s.hour);
   const pointBusy = useClimaStore((s) => s.pointBusy);
+  const pointError = useClimaStore((s) => s.pointError);
+  const retryPoint = useClimaStore((s) => s.retryPoint);
   const meta = HAZARD_META[hazard];
   const v = point?.vulnerability;
 
@@ -75,6 +77,9 @@ export default function MicroclimateCard() {
       <div className="mc-foot mono">
         Elevation {point?.elevation_m != null ? `${point.elevation_m.toFixed(0)} m` : "\u2014"}{" \u00B7 "}{point?.source ?? "\u2014"}
       </div>
+      {pointError && !pointBusy && (
+        <div className="inline-err">Live data unavailable for this point \u2014 <button onClick={retryPoint}>retry</button></div>
+      )}
     </section>
   );
 }

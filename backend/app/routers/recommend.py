@@ -31,17 +31,40 @@ class RecommendResponse(BaseModel):
     source: str = "rule-based"
 
 
-def _suggest_mix(cell: dict, budget: float | None) -> list[dict]:
+def _goal_hazard(goal: str) -> str:
+    text = goal.lower()
+    if "flood" in text or "water" in text or "monsoon" in text:
+        return "flood"
+    if "air" in text or "aqi" in text or "pollution" in text:
+        return "air"
+    return "heat"
+
+
+def _suggest_mix(cell: dict, budget: float | None, goal: str) -> list[dict]:
     commuters = cell.get("bus_commuters_daily", 0)
-    mix = [
-        {"type": "tree", "species": "pungai", "count": 80},
-        {"type": "shade", "species": "shade_sail", "count": 2 if commuters > 1000 else 1},
-        {"type": "cool_roof", "species": "cool_roof", "count": 6},
-    ]
-    if cell.get("flood_risk") == "high":
-        mix.append({"type": "rain_garden", "species": "rain_garden", "count": 4})
+    hazard = _goal_hazard(goal)
+    if hazard == "flood":
+        mix = [
+            {"type": "permeable", "species": "permeable", "count": 140 if commuters > 1000 else 90},
+            {"type": "rain_garden", "species": "rain_garden", "count": 6 if cell.get("flood_risk") == "high" else 4},
+            {"type": "tree", "species": "portia", "count": 35},
+        ]
+    elif hazard == "air":
+        mix = [
+            {"type": "tree", "species": "neem", "count": 90},
+            {"type": "tree", "species": "pungai", "count": 45},
+            {"type": "shade", "species": "shade_sail", "count": 1 if commuters <= 1000 else 2},
+        ]
+    else:
+        mix = [
+            {"type": "tree", "species": "pungai", "count": 80},
+            {"type": "shade", "species": "shade_sail", "count": 2 if commuters > 1000 else 1},
+            {"type": "cool_roof", "species": "cool_roof", "count": 6},
+        ]
+        if cell.get("flood_risk") == "high":
+            mix.append({"type": "rain_garden", "species": "rain_garden", "count": 4})
     if budget:
-        while compute_effect(cell, mix)["cost_inr"] > budget and mix[0]["count"] > 10:
+        while compute_effect(cell, mix)["cost_inr"] > budget and mix and mix[0]["count"] > 10:
             mix[0]["count"] -= 10
     return mix
 
@@ -52,7 +75,7 @@ def recommend(req: RecommendRequest):
     if not cell:
         return RecommendResponse(goal=req.goal)
 
-    mix = _suggest_mix(cell, req.budget_inr)
+    mix = _suggest_mix(cell, req.budget_inr, req.goal)
     eff = compute_effect(cell, mix)
     names = ", ".join(
         f"{m['count']}x {SPECIES_BY_KEY.get(m['species'], {}).get('name', m['species'])}" for m in mix
@@ -71,12 +94,30 @@ def recommend(req: RecommendRequest):
             f"and one risk to watch. No preamble, no markdown."
         )
 
-    rationale = ai or (
-        f"For {cell['name']}, this mix is the best value: it brings feels-like down about "
-        f"{eff['delta_feels_like_c']}°C and helps ~{eff['people_helped']:,} people for "
-        f"₹{int(eff['cost_inr']):,}. Native species (Pungai) keep water and pollen low, and it's "
-        f"prioritised here because this is a high-footfall, low-canopy area."
-    )
+    hazard = _goal_hazard(req.goal)
+    if hazard == "flood":
+        fallback = (
+            f"For {cell['name']}, this plan prioritises runoff absorption and local storage: "
+            f"{names}. It also cools the street by about {eff['delta_feels_like_c']}C, helps "
+            f"~{eff['people_helped']:,} people, and costs INR {int(eff['cost_inr']):,}. Watch "
+            f"maintenance of permeable surfaces before peak monsoon."
+        )
+    elif hazard == "air":
+        fallback = (
+            f"For {cell['name']}, this plan uses pollution-tolerant canopy and shade where people wait: "
+            f"{names}. It can lower exposure by {eff.get('air_quality_change', 'improving street-level air')}, "
+            f"help ~{eff['people_helped']:,} people, and costs INR {int(eff['cost_inr']):,}. Keep planting "
+            f"away from narrow choke points so airflow is not blocked."
+        )
+    else:
+        fallback = (
+            f"For {cell['name']}, this mix is the best value: {names}. It brings feels-like down about "
+            f"{eff['delta_feels_like_c']}C and helps ~{eff['people_helped']:,} people for "
+            f"INR {int(eff['cost_inr']):,}. It is prioritised here because this is a high-footfall, "
+            f"low-canopy area."
+        )
+
+    rationale = ai or fallback
 
     return RecommendResponse(
         area_name=cell["name"],

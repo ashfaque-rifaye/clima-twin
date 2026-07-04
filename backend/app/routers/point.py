@@ -16,6 +16,20 @@ router = APIRouter(tags=["point"])
 _FLOOD_BASE = {"low": 0.2, "medium": 0.5, "high": 0.8}
 
 
+def _aqi_category(aqi: int | None) -> str | None:
+    if aqi is None:
+        return None
+    if aqi <= 50:
+        return "Good"
+    if aqi <= 100:
+        return "Moderate"
+    if aqi <= 150:
+        return "Unhealthy for sensitive groups"
+    if aqi <= 200:
+        return "Bad"
+    return "Severe"
+
+
 class PointResponse(BaseModel):
     lat: float
     lng: float
@@ -36,7 +50,7 @@ def point(lat: float, lng: float):
     rt = realtime_point(lat, lng)
     w, a, fc = rt.get("weather"), rt.get("air"), rt.get("forecast") or []
     live = rt.get("live", False)
-    elev = rt.get("elevation")
+    elev = rt.get("elevation") if rt.get("elevation") is not None else cell.get("elevation_m")
     area = rt.get("name") or cell.get("name") or "this area"
 
     heat = {
@@ -45,9 +59,10 @@ def point(lat: float, lng: float):
         "condition": (w or {}).get("condition"),
         "humidity": (w or {}).get("humidity"),
     }
+    aqi = (a or {}).get("aqi") if (a and a.get("aqi") is not None) else cell.get("air_quality_index")
     air = {
-        "aqi": (a or {}).get("aqi") if (a and a.get("aqi") is not None) else cell.get("air_quality_index"),
-        "category": (a or {}).get("category"),
+        "aqi": aqi,
+        "category": (a or {}).get("category") or _aqi_category(aqi),
         "dominant": (a or {}).get("dominant") or cell.get("dominant_pollutant"),
         "health": (a or {}).get("health"),
     }

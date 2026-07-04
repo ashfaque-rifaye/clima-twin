@@ -1,9 +1,4 @@
-"""GET /hotspots — priority list of areas to act on (equity-weighted).
-
-Ranks the Chennai grid by hazard severity x vulnerability x data-sparsity
-("blind spot" boost), so the neediest + least-measured areas surface, not just
-the hottest rich ones. Day 4: same scoring over the full BigQuery grid.
-"""
+"""GET /hotspots - equity-weighted priority list by hazard."""
 from fastapi import APIRouter
 from pydantic import BaseModel
 
@@ -24,11 +19,11 @@ class Hotspot(BaseModel):
 class HotspotsResponse(BaseModel):
     hazard: str = "heat"
     hotspots: list[Hotspot] = []
-    source: str = "sample"
+    source: str = "synthetic"
 
 
 _FLOOD = {"low": 0.2, "medium": 0.55, "high": 0.9}
-_BLIND = {"low": 1.0, "medium": 0.5, "high": 0.0}  # low data density => bigger blind-spot boost
+_BLIND = {"low": 1.0, "medium": 0.5, "high": 0.0}
 
 
 def _score(cell: dict, hazard: str) -> float:
@@ -42,22 +37,41 @@ def _score(cell: dict, hazard: str) -> float:
     return round(0.6 * base + 0.25 * vuln + 0.15 * blind, 3)
 
 
+def _why(cell: dict, hazard: str) -> str:
+    if hazard == "flood":
+        return (
+            f"{cell.get('flood_risk', 'unknown')} flood risk | {cell.get('elevation_m', '?')} m elevation | "
+            f"{int(cell.get('waterway_proximity', 0) * 100)}% waterway proximity | "
+            f"{cell.get('bus_commuters_daily', 0)} daily commuters | data {cell.get('data_density', '?')}"
+        )
+    if hazard == "air":
+        return (
+            f"AQI {cell['air_quality_index']} {cell.get('dominant_pollutant', '')} | "
+            f"{int(cell.get('road_pressure', 0) * 100)}% traffic pressure | "
+            f"{cell['green_cover_pct']}% canopy | {cell.get('bus_commuters_daily', 0)} daily commuters | "
+            f"data {cell.get('data_density', '?')}"
+        )
+    return (
+        f"{cell['feels_like_c']}C feels-like | {cell['green_cover_pct']}% canopy | "
+        f"AQI {cell['air_quality_index']} | {cell.get('bus_commuters_daily', 0)} daily commuters | "
+        f"data {cell.get('data_density', '?')}"
+    )
+
+
 @router.get("/hotspots", response_model=HotspotsResponse)
 def hotspots(hazard: str = "heat", limit: int = 5):
     ranked = sorted(GRID, key=lambda c: _score(c, hazard), reverse=True)[:limit]
-    out = [
-        Hotspot(
-            id=c["id"],
-            name=c["name"],
-            lat=c["lat"],
-            lng=c["lng"],
-            priority_score=_score(c, hazard),
-            why=(
-                f"{c['feels_like_c']}°C feels-like · {c['green_cover_pct']}% canopy · "
-                f"AQI {c['air_quality_index']} · {c.get('bus_commuters_daily', 0)} daily commuters · "
-                f"data {c.get('data_density', '?')}"
-            ),
-        )
-        for c in ranked
-    ]
-    return HotspotsResponse(hazard=hazard, hotspots=out)
+    return HotspotsResponse(
+        hazard=hazard,
+        hotspots=[
+            Hotspot(
+                id=c["id"],
+                name=c["name"],
+                lat=c["lat"],
+                lng=c["lng"],
+                priority_score=_score(c, hazard),
+                why=_why(c, hazard),
+            )
+            for c in ranked
+        ],
+    )

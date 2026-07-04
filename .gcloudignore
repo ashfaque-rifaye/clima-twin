@@ -1,0 +1,26 @@
+# Only backend/ + frontend/ (source) + Dockerfile are needed to build the image.
+# Everything below is excluded from the Cloud Build source upload.
+
+.git/
+.gitignore
+.claude/
+.dockerignore
+
+# rebuilt inside the Docker image — never upload
+**/node_modules/
+**/.venv/
+**/dist/
+**/__pycache__/
+
+# design refs, decks and docs are not part of the runtime image
+Design Mockup Request/
+docs/
+*.pptx
+*.pdf
+~$*
+
+# local helper scripts at repo root
+/_*.py
+
+# env files (secrets come from Secret Manager on Cloud Run)
+**/.env

@@ -1,25 +1,90 @@
 :root {
-  font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: "Manrope", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   color-scheme: dark;
-  --ink: #eaf1f5;
-  --muted: #93a6b3;
-  --faint: #5f7180;
-  --panel: rgba(15, 22, 30, 0.82);
-  --panel-solid: #0f161e;
-  --line: rgba(255, 255, 255, 0.10);
+
+  /* ---- ClimaTwin design-system tokens (see docs/DESIGN-SYSTEM.md) ---- */
+  --mono: "Roboto Mono", ui-monospace, Consolas, monospace;
+
+  /* brand */
+  --ct-blue: #1a73e8;
+  --ct-green: #34a853;
+  --ct-brand-grad: linear-gradient(135deg, #1a73e8, #34a853);
+
+  /* hazards */
+  --ct-heat: #ea4335;
+  --ct-flood: #1a73e8;
+  --ct-air: #12b5cb;
+
+  /* status */
+  --ct-alert: #d93025;
+  --ct-alert-ink: #c1271f;
+  --ct-good: #1e8e3e;
+  --ct-node-alert: #ef4444;
+  --ct-node-ok: #34d399;
+  --ct-node-info: #38bdf8;
+
+  /* surfaces */
+  --ct-bg: #0b1622;
+  --ct-chrome: #ffffff;
+  --ct-sidebar: #f6f8fa;
+  --ct-card: #ffffff;
+  --ct-track: #eef1f4;
+  --ct-chip: #f1f3f4;
+  --ct-ink-card: linear-gradient(160deg, #0f1d2e, #15273b);
+  --ct-ink-border: #1d3047;
+  --ct-border: #e3e7eb;
+  --ct-border-2: #e6eaee;
+
+  /* text on light */
+  --ct-ink: #1f2733;
+  --ct-ink-2: #3c4858;
+  --ct-ink-3: #5f6b7a;
+  --ct-muted: #8a96a6;
+  --ct-muted-2: #9aa6b4;
+  --ct-faint: #b3bcc7;
+
+  /* text on dark glass */
+  --ct-on-dark: #ffffff;
+  --ct-on-dark-2: #9fb0c2;
+  --ct-on-dark-3: #cbd4de;
+
+  /* glass */
+  --ct-glass: rgba(13, 22, 33, 0.84);
+  --ct-glass-2: rgba(9, 16, 24, 0.93);
+  --ct-glass-line: rgba(255, 255, 255, 0.13);
+  --ct-hud-line: rgba(120, 170, 230, 0.32);
+
+  /* radii */
+  --r-sm: 7px; --r: 9px; --r-md: 11px; --r-lg: 14px; --r-xl: 16px; --r-pill: 20px;
+
+  /* shadows / blur */
+  --sh-hair: 0 1px 2px rgba(16, 24, 40, 0.04);
+  --sh-float: 0 4px 16px rgba(16, 24, 40, 0.16);
+  --sh-glass: 0 6px 22px rgba(0, 0, 0, 0.34);
+  --sh-hud: 0 8px 26px rgba(0, 0, 0, 0.5);
+  --sh-btn: 0 2px 6px rgba(26, 115, 232, 0.3);
+  --blur: blur(10px); --blur-sm: blur(8px);
+
+  /* ---- backward-compatible aliases (current App.css) mapped to mockup ---- */
+  --ink: var(--ct-on-dark);
+  --muted: var(--ct-on-dark-2);
+  --faint: var(--ct-on-dark-3);
+  --panel: var(--ct-glass);
+  --panel-solid: #0f1d2e;
+  --line: var(--ct-glass-line);
   --line-2: rgba(255, 255, 255, 0.16);
-  --brand: #19c39a;
-  --heat: #ff6a4d;
-  --teal: #2fe3c2;
-  --amber: #f6c453;
-  --red: #ff4d57;
-  --flood: #2b8bff;
-  --air: #b08bff;
-  --card-sh: 0 18px 50px rgba(0, 0, 0, 0.5);
+  --brand: var(--ct-blue);
+  --heat: var(--ct-heat);
+  --teal: var(--ct-node-ok);
+  --amber: #fbbc04;
+  --red: var(--ct-alert);
+  --flood: var(--ct-flood);
+  --air: var(--ct-air);
+  --card-sh: var(--sh-glass);
 }
 
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
-body { background: #060a0f; color: var(--ink); -webkit-font-smoothing: antialiased; }
+body { background: var(--ct-bg); color: var(--ink); -webkit-font-smoothing: antialiased; }
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.14); border-radius: 8px; }

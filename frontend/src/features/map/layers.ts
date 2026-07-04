@@ -171,10 +171,11 @@ export function buildLayers({ hazard, grid, cells, hotspots, selected, time, rip
         getRadius: (d) => 55 + d.weight * 130,
         radiusUnits: "meters",
         radiusMinPixels: 1.1,
+        radiusMaxPixels: 4.5, // texture dots, never blobs when zoomed in
         stroked: false,
         filled: true,
-        getFillColor: (d) => [r, g, b, Math.round(20 + d.weight * 120)] as RGBA,
-        opacity: 0.5,
+        getFillColor: (d) => [r, g, b, Math.round(20 + d.weight * 110)] as RGBA,
+        opacity: 0.4,
       }),
     );
   }

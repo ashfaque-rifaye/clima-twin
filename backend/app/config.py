@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     # CORS
     cors_origins: str = "http://localhost:5173"
 
+    # Ops
+    rate_limit_per_minute: int = 240  # generous for a live demo, blocks abuse
+    log_level: str = "INFO"
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

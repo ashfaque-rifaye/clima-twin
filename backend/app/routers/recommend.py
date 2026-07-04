@@ -5,7 +5,7 @@ Gemini (free Flash) for a plain-language rationale + trade-offs. Falls back to
 a templated rationale when there's no key.
 """
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..data import nearest_cell, SPECIES_BY_KEY
 from ..model import compute_effect
@@ -15,10 +15,10 @@ router = APIRouter(tags=["recommend"])
 
 
 class RecommendRequest(BaseModel):
-    lat: float
-    lng: float
-    goal: str = "reduce heat for bus commuters"
-    budget_inr: float | None = None
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+    goal: str = Field(default="reduce heat for bus commuters", max_length=300)
+    budget_inr: float | None = Field(default=None, ge=0, le=1e10)
 
 
 class RecommendResponse(BaseModel):

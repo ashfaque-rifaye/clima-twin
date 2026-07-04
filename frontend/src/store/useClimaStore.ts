@@ -93,6 +93,9 @@ interface ClimaState {
 export const useClimaStore = create<ClimaState>((set, get) => ({
   mapsKey: (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined) ?? null,
   async loadConfig() {
+    // Only adopt the backend-served key when no env key exists (production
+    // build) — swapping keys after mount double-loads the Maps script.
+    if (get().mapsKey) return;
     try {
       const c = await getConfig();
       if (c.has_maps && c.maps_api_key) set({ mapsKey: c.maps_api_key });

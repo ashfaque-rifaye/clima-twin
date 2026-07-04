@@ -9,16 +9,16 @@ router = APIRouter(tags=["simulate"])
 
 
 class Intervention(BaseModel):
-    type: str  # tree | cool_roof | shade | misting | permeable | rain_garden
-    species: str | None = None
-    count: int = 1
+    type: str = Field(max_length=40)  # tree | cool_roof | shade | misting | permeable | rain_garden
+    species: str | None = Field(default=None, max_length=60)
+    count: int = Field(default=1, ge=0, le=10_000)
 
 
 class SimulateRequest(BaseModel):
-    lat: float
-    lng: float
-    interventions: list[Intervention] = Field(default_factory=list)
-    budget_inr: float | None = None
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+    interventions: list[Intervention] = Field(default_factory=list, max_length=25)
+    budget_inr: float | None = Field(default=None, ge=0, le=1e10)
 
 
 class SimulateResponse(BaseModel):

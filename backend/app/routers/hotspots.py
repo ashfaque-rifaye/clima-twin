@@ -1,5 +1,7 @@
 """GET /hotspots - equity-weighted priority list by hazard."""
-from fastapi import APIRouter
+from typing import Literal
+
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from ..data import GRID
@@ -59,7 +61,10 @@ def _why(cell: dict, hazard: str) -> str:
 
 
 @router.get("/hotspots", response_model=HotspotsResponse)
-def hotspots(hazard: str = "heat", limit: int = 5):
+def hotspots(
+    hazard: Literal["heat", "flood", "air", "green"] = "heat",
+    limit: int = Query(default=5, ge=1, le=50),
+):
     ranked = sorted(GRID, key=lambda c: _score(c, hazard), reverse=True)[:limit]
     return HotspotsResponse(
         hazard=hazard,

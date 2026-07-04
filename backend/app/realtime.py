@@ -4,16 +4,20 @@ Uses the server-side (API-restricted) key. Every call degrades gracefully to
 None so /point can fall back to sample data.
 """
 import asyncio
+import logging
 import time
 
 import httpx
 
 from .config import settings
 
+log = logging.getLogger("climatwin.realtime")
+
 _cache: dict[tuple, tuple[float, dict]] = {}
 _grid_cache: dict[str, tuple[float, list]] = {}
 _TTL = 600  # seconds
 _GRID_TTL = 1800  # 30 min
+_GRID_CONCURRENCY = 16  # be polite to the Weather/AQ APIs
 
 # Chennai bounding box: lat_min, lat_max, lng_min, lng_max
 CHENNAI_BBOX = (12.84, 13.24, 80.15, 80.34)
@@ -156,23 +160,52 @@ def _grid_pts(n: int) -> list[tuple[float, float]]:
     return [(a + (b - a) * i / (n - 1), c + (d - c) * j / (n - 1)) for i in range(n) for j in range(n)]
 
 
-async def _afeels(client: httpx.AsyncClient, lat: float, lng: float):
+async def _afeels(client: httpx.AsyncClient, sem: asyncio.Semaphore, lat: float, lng: float):
     try:
-        r = await client.get(
-            "https://weather.googleapis.com/v1/currentConditions:lookup",
-            params={"key": _key(), "location.latitude": lat, "location.longitude": lng, "unitsSystem": "METRIC"},
-        )
+        async with sem:
+            r = await client.get(
+                "https://weather.googleapis.com/v1/currentConditions:lookup",
+                params={"key": _key(), "location.latitude": lat, "location.longitude": lng, "unitsSystem": "METRIC"},
+            )
         if r.status_code == 200:
             return (r.json().get("feelsLikeTemperature") or {}).get("degrees")
-    except Exception:
-        pass
+        log.warning("weather grid point %s,%s -> HTTP %s", lat, lng, r.status_code)
+    except Exception as exc:
+        log.warning("weather grid point %s,%s failed: %s", lat, lng, type(exc).__name__)
+    return None
+
+
+async def _aaqi(client: httpx.AsyncClient, sem: asyncio.Semaphore, lat: float, lng: float):
+    try:
+        async with sem:
+            r = await client.post(
+                "https://airquality.googleapis.com/v1/currentConditions:lookup",
+                params={"key": _key()},
+                json={"location": {"latitude": lat, "longitude": lng}},
+            )
+        if r.status_code == 200:
+            idx = r.json().get("indexes") or []
+            if idx:
+                return idx[0].get("aqi")
+    except Exception as exc:
+        log.warning("air grid point %s,%s failed: %s", lat, lng, type(exc).__name__)
     return None
 
 
 async def heat_grid(n: int = 8) -> list[dict]:
     pts = _grid_pts(n)
+    sem = asyncio.Semaphore(_GRID_CONCURRENCY)
     async with httpx.AsyncClient(timeout=10) as client:
-        vals = await asyncio.gather(*[_afeels(client, la, ln) for la, ln in pts])
+        vals = await asyncio.gather(*[_afeels(client, sem, la, ln) for la, ln in pts])
+    return [{"lat": la, "lng": ln, "v": v} for (la, ln), v in zip(pts, vals) if v is not None]
+
+
+async def air_grid(n: int = 4) -> list[dict]:
+    """Sparse live AQI anchors (n*n calls — keep small, AQ free tier is 10k/mo)."""
+    pts = _grid_pts(n)
+    sem = asyncio.Semaphore(_GRID_CONCURRENCY)
+    async with httpx.AsyncClient(timeout=10) as client:
+        vals = await asyncio.gather(*[_aaqi(client, sem, la, ln) for la, ln in pts])
     return [{"lat": la, "lng": ln, "v": v} for (la, ln), v in zip(pts, vals) if v is not None]
 
 
@@ -201,14 +234,28 @@ def _norm(raw: list[dict], invert: bool = False) -> list[dict]:
 
 
 async def hazard_grid(hazard: str, n: int = 8) -> list[dict]:
+    """Live anchor points (normalised 0..1 weights) for a hazard, cached 30 min.
+
+    Empty list means "no live data" — callers fall back to the synthetic field.
+    Failed refreshes are cached briefly so an API outage can't stampede.
+    """
     now = time.time()
     if hazard in _grid_cache and now - _grid_cache[hazard][0] < _GRID_TTL:
         return _grid_cache[hazard][1]
+    if not _key():
+        return []
     if hazard == "heat":
         pts = _norm(await heat_grid(n))
     elif hazard == "flood":
         pts = _norm(elevation_grid(n), invert=True)  # low elevation => high flood weight
+    elif hazard == "air":
+        pts = _norm(await air_grid())
     else:
         pts = []
-    _grid_cache[hazard] = (now, pts)
+    if pts:
+        _grid_cache[hazard] = (now, pts)
+    else:
+        # short negative-cache: retry in 2 min, not on every request
+        log.warning("live %s grid unavailable — serving synthetic fallback", hazard)
+        _grid_cache[hazard] = (now - _GRID_TTL + 120, pts)
     return pts

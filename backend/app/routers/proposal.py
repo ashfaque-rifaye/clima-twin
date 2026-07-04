@@ -2,7 +2,7 @@
 import json
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from ..gemini import generate, gemini_available
 
@@ -10,8 +10,15 @@ router = APIRouter(tags=["proposal"])
 
 
 class ProposalRequest(BaseModel):
-    area_name: str
+    area_name: str = Field(min_length=1, max_length=120)
     plan: dict  # interventions + simulated effect
+
+    @field_validator("plan")
+    @classmethod
+    def _plan_size(cls, v: dict) -> dict:
+        if len(json.dumps(v)) > 20_000:
+            raise ValueError("plan payload too large")
+        return v
 
 
 class ProposalResponse(BaseModel):

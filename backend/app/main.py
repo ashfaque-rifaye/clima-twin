@@ -1,20 +1,29 @@
 """ClimaTwin API — FastAPI entrypoint.
 
-Routers are thin for now (Day 0 scaffold); real data/model wiring lands on
-Day 1+ per the build plan. Everything is designed to run on free Google tiers.
+Hardened for production: request logging, per-IP rate limiting, security
+headers, validated inputs, honest data-source labels. Everything is designed
+to run on free Google tiers.
 """
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from . import hardening
 from .config import settings
+from .gemini import gemini_available
 from .routers import microclimate, simulate, recommend, proposal, hotspots, ask, point, grid
+
+logging.basicConfig(
+    level=getattr(logging, settings.log_level.upper(), logging.INFO),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 app = FastAPI(
     title="ClimaTwin API",
-    version="0.1.0",
+    version="0.2.0",
     description="Urban microclimate decision engine — heat, flood, air. Free-tier Google stack.",
 )
 
@@ -22,9 +31,11 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+hardening.install(app, rate_per_minute=settings.rate_limit_per_minute)
 
 
 @app.middleware("http")
@@ -44,8 +55,10 @@ def health():
     return {
         "status": "ok",
         "service": "climatwin-api",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "ai": "gemini-flash (ai-studio free tier)",
+        "gemini": gemini_available(),
+        "live_data": bool(settings.server_api_key or settings.google_maps_api_key),
     }
 
 

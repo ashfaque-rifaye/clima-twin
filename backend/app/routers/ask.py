@@ -1,12 +1,14 @@
 """POST /ask — plain-language question over Chennai's microclimate data.
 
-Gemini (free Flash) answers grounded on the grid; offline fallback uses simple
+Gemini (free Flash) answers grounded on a compact digest of the grid (top and
+bottom extremes per hazard + city aggregates) — sending all 900 cells wasted
+tokens and latency for no accuracy gain. Offline fallback uses simple
 heuristics so the box always responds.
 """
 import json
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..data import GRID
 from ..gemini import generate, gemini_available
@@ -17,7 +19,7 @@ _FIELDS = ("name", "feels_like_c", "air_quality_index", "green_cover_pct", "floo
 
 
 class AskRequest(BaseModel):
-    question: str
+    question: str = Field(min_length=1, max_length=500)
 
 
 class AskResponse(BaseModel):
@@ -25,15 +27,37 @@ class AskResponse(BaseModel):
     source: str = "offline"
 
 
+def _digest() -> dict:
+    """Compact grounding context: extremes + aggregates, not the raw grid."""
+    def rows(cells):
+        return [{k: c.get(k) for k in _FIELDS} for c in cells]
+
+    by_heat = sorted(GRID, key=lambda c: c["feels_like_c"], reverse=True)
+    by_air = sorted(GRID, key=lambda c: c["air_quality_index"], reverse=True)
+    by_green = sorted(GRID, key=lambda c: c["green_cover_pct"])
+    flood_high = [c for c in GRID if c.get("flood_risk") == "high"]
+    return {
+        "hottest": rows(by_heat[:10]),
+        "coolest": rows(by_heat[-5:]),
+        "worst_air": rows(by_air[:10]),
+        "least_green": rows(by_green[:10]),
+        "high_flood_risk": rows(flood_high[:12]),
+        "city_averages": {
+            "feels_like_c": round(sum(c["feels_like_c"] for c in GRID) / len(GRID), 1),
+            "aqi": round(sum(c["air_quality_index"] for c in GRID) / len(GRID)),
+            "green_cover_pct": round(sum(c["green_cover_pct"] for c in GRID) / len(GRID), 1),
+            "areas": len(GRID),
+        },
+    }
+
+
 @router.post("/ask", response_model=AskResponse)
 def ask(req: AskRequest):
-    ctx = [{k: c.get(k) for k in _FIELDS} for c in GRID]
-
     ai = None
     if gemini_available():
         ai = generate(
             "You are ClimaTwin, an urban microclimate assistant for Chennai. "
-            f"Area data (JSON): {json.dumps(ctx)}. "
+            f"City data digest (JSON): {json.dumps(_digest())}. "
             "Answer the planner's question in 2-3 sentences, plain English, citing area "
             f"names and numbers. No markdown. Question: {req.question}"
         )
@@ -48,7 +72,7 @@ def ask(req: AskRequest):
         answer=(
             f"Hottest: {hottest['name']} ({hottest['feels_like_c']}°C feels-like). "
             f"Worst air: {worst_air['name']} (AQI {worst_air['air_quality_index']}). "
-            f"Highest flood risk: {', '.join(floody) or 'none flagged'}. "
+            f"Highest flood risk: {', '.join(floody[:6]) or 'none flagged'}. "
             f"(Add a Gemini key for full natural-language answers.)"
         ),
         source="offline",

@@ -4,7 +4,7 @@ Live data from Google Weather + Air Quality APIs (cached); flood modeled from
 rainfall forecast + terrain. Falls back to the sample grid when live data is
 unavailable (e.g., no server key).
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from ..data import nearest_cell
@@ -45,7 +45,10 @@ class PointResponse(BaseModel):
 
 
 @router.get("/point", response_model=PointResponse)
-def point(lat: float, lng: float):
+def point(
+    lat: float = Query(ge=-90, le=90),
+    lng: float = Query(ge=-180, le=180),
+):
     cell = nearest_cell(lat, lng) or {}
     rt = realtime_point(lat, lng)
     w, a, fc = rt.get("weather"), rt.get("air"), rt.get("forecast") or []

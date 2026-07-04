@@ -3,7 +3,7 @@
 Reads the local Chennai sample grid (nearest cell). Day 1+: swap to a
 BigQuery-backed lookup + live Air Quality / Pollen for the exact point.
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from ..data import nearest_cell
@@ -29,7 +29,10 @@ class MicroclimateResponse(BaseModel):
 
 
 @router.get("/microclimate", response_model=MicroclimateResponse)
-def microclimate(lat: float, lng: float):
+def microclimate(
+    lat: float = Query(ge=-90, le=90),
+    lng: float = Query(ge=-180, le=180),
+):
     cell = nearest_cell(lat, lng)
     if not cell:
         return MicroclimateResponse(lat=lat, lng=lng, source="none")

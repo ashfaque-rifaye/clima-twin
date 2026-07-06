@@ -306,29 +306,57 @@ def _norm(raw: list[dict], invert: bool = False) -> list[dict]:
     ]
 
 
-async def hazard_grid(hazard: str, n: int = 8) -> list[dict]:
-    """Live anchor points (normalised 0..1 weights) for a hazard, cached 30 min.
+_refreshing: set[str] = set()
+_refresh_tasks: set = set()
 
-    Empty list means "no live data" — callers fall back to the synthetic field.
-    Failed refreshes are cached briefly so an API outage can't stampede.
+
+async def _compute_hazard_grid(hazard: str, n: int) -> list[dict]:
+    if hazard == "heat":
+        return _norm(await heat_grid(n))
+    if hazard == "flood":
+        return _norm(elevation_grid(n), invert=True)  # low elevation => high flood weight
+    if hazard == "air":
+        return _norm(await air_grid())
+    return []
+
+
+async def _refresh_hazard(hazard: str, n: int) -> None:
+    try:
+        pts = await _compute_hazard_grid(hazard, n)
+        now = time.time()
+        if pts:
+            _grid_cache[hazard] = (now, pts)
+        else:
+            # short negative-cache: retry in ~2 min, not on every request
+            log.warning("live %s grid unavailable — serving synthetic fallback", hazard)
+            _grid_cache[hazard] = (now - _GRID_TTL + 120, [])
+    except Exception:
+        log.exception("hazard grid refresh failed: %s", hazard)
+    finally:
+        _refreshing.discard(hazard)
+
+
+def _schedule_refresh(hazard: str, n: int) -> None:
+    if not _key() or hazard in _refreshing:
+        return
+    _refreshing.add(hazard)
+    task = asyncio.create_task(_refresh_hazard(hazard, n))
+    _refresh_tasks.add(task)  # keep a reference so the task isn't GC'd
+    task.add_done_callback(_refresh_tasks.discard)
+
+
+async def hazard_grid(hazard: str, n: int = 8) -> list[dict]:
+    """Live anchor points (normalised 0..1 weights), refreshed in the background.
+
+    Reads are INSTANT: return whatever live anchors are cached (empty until the
+    first background refresh lands → callers use the synthetic field), and kick
+    off a background refresh when the cache is stale. The 64-call live fan-out
+    never blocks a request — matching the deck's "instant reads; live calls only
+    for the selected point". Empty means "no live data yet".
     """
     now = time.time()
-    if hazard in _grid_cache and now - _grid_cache[hazard][0] < _GRID_TTL:
-        return _grid_cache[hazard][1]
-    if not _key():
-        return []
-    if hazard == "heat":
-        pts = _norm(await heat_grid(n))
-    elif hazard == "flood":
-        pts = _norm(elevation_grid(n), invert=True)  # low elevation => high flood weight
-    elif hazard == "air":
-        pts = _norm(await air_grid())
-    else:
-        pts = []
-    if pts:
-        _grid_cache[hazard] = (now, pts)
-    else:
-        # short negative-cache: retry in 2 min, not on every request
-        log.warning("live %s grid unavailable — serving synthetic fallback", hazard)
-        _grid_cache[hazard] = (now - _GRID_TTL + 120, pts)
-    return pts
+    cached = _grid_cache.get(hazard)
+    if cached and now - cached[0] < _GRID_TTL:
+        return cached[1]
+    _schedule_refresh(hazard, n)
+    return cached[1] if cached else []

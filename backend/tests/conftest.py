@@ -11,8 +11,11 @@ from app.main import app
 from app.routers import ask as ask_mod
 from app.routers import grid as grid_mod
 from app.routers import point as point_mod
+from app.routers import optimize as optimize_mod
 from app.routers import proposal as proposal_mod
 from app.routers import recommend as recommend_mod
+from app.routers import scenarios as scenarios_mod
+from app.data_access.scenarios import InMemoryScenarioStore
 
 FAKE_REALTIME = {
     "weather": {"temp_c": 33.0, "feels_like_c": 39.5, "humidity": 68, "condition": "Sunny", "rain_prob": 5},
@@ -37,12 +40,20 @@ def offline(monkeypatch):
 
     monkeypatch.setattr(grid_mod, "hazard_grid", no_anchors)
 
-    for mod in (ask_mod, recommend_mod, proposal_mod):
+    for mod in (ask_mod, recommend_mod, proposal_mod, optimize_mod):
         monkeypatch.setattr(mod, "gemini_available", lambda: False)
         # Patch both AI entrypoints regardless of which a module imports, so the
         # suite stays fully offline no matter how routers evolve.
         monkeypatch.setattr(mod, "generate", lambda *a, **k: None, raising=False)
         monkeypatch.setattr(mod, "generate_json", lambda *a, **k: None, raising=False)
+
+    # Scenario persistence uses in-memory in tests (no live Firestore calls).
+    monkeypatch.setattr(scenarios_mod, "_store", InMemoryScenarioStore())
+
+    # Report generation: no live Gemini, no static-map network in tests.
+    from app import report as report_mod
+    monkeypatch.setattr(report_mod, "gemini_available", lambda: False)
+    monkeypatch.setattr(report_mod, "_static_map", lambda *a, **k: None)
     yield
 
 

@@ -6,6 +6,14 @@
 
 **Baseline (start of program):** 47 backend tests + 30 frontend tests passing.
 
+## DEPLOYED ✅ (2026-07-06)
+Live on Cloud Run: **https://climatwin-980129431310.asia-south1.run.app** (service `climatwin`, revision `climatwin-00001-z5s`, `asia-south1`, 1 GiB / max-3).
+- Runtime SA `980129431310-compute@…` granted `bigquery.dataViewer` + `bigquery.jobUser` + `datastore.user` → prod loads grid **from BigQuery**, BQML model served (R²=0.70), Firestore ready.
+- Verified live: `/health` (grid_source=bigquery), `/point` (live Weather/Air/Elevation + modeled pollen + model_baseline), `/interventions` (per-hazard), `/optimize`, `/report` (1.4 MB HTML + embedded Static Maps), `/report/docx` (valid Word), SPA served, `/config` has_maps.
+- **Known:** live Gemini is 429 rate-limited (AI Studio free-tier **daily** quota exhausted by today's dev/testing) → AI narratives fall back to deterministic templates until the daily reset. Not a defect; graceful by design. To restore immediately, swap `GEMINI_API_KEY` for a key with fresh quota and redeploy.
+- **Not enabled (safe default):** `GRID_SOURCE=auto` (BigQuery synthetic-seeded). Set `GRID_SOURCE=ee_enriched` + redeploy to serve real Earth Engine satellite data on the map (changes demo numbers — your call).
+
+
 **Legend — Status:** ⬜ not started · 🟨 in progress · ✅ done · 🚩 flagged (needs external resource) · ⏸ deferred to later phase
 
 ---
@@ -42,17 +50,44 @@ All 9 tasks done and validated. **77 backend tests + 30 frontend tests green.** 
 
 | # | Task | Status | Deps | Files | Validation |
 |---|---|---|---|---|---|
-| 2.1 | Synthetic pollen fallback for India (modeled where no live coverage) | 🟨 | — | new `pollen_model.py`, `routers/point.py`, tests | — |
-| 2.2 | EE grid-enrichment as a validated toggle (`grid_source=ee_enriched`, hybrid) | ⬜ | 1.6, 1.9 | `data_access/*`, loader, config | — |
-| 2.3 | Anomaly detection endpoint (`/anomalies`) — "patterns/anomalies" | ⬜ | 1.6 | new router | — |
-| 2.4 | RAG grounding for `/ask` (retrieval over a small corpus) | ⬜ | 1.1 | `routers/ask.py`, new corpus | — |
-| 2.5 | Firestore persistence for saved scenarios (deck S8) | ⬜ | — | new `data_access/scenarios.py` | needs Firestore |
-| 2.6 | Observability — request IDs, structured logs, Cloud Logging-friendly | ⬜ | — | `hardening.py`, `main.py` | — |
-| 2.7 | Dead-dep cleanup (`maplibre-gl`, `db-dtypes`) + requirements hygiene | ⬜ | — | `package.json`, `requirements.txt` | — |
-| 2.8 | `/grid` latency (live-anchor fetch was ~2.7s) — background refresh | ⬜ | — | `realtime.py`, `routers/grid.py` | — |
+| 2.1 | Synthetic pollen fallback for India (modeled where no live coverage) | ✅ | — | `pollen_model.py`, `routers/point.py`, `tests/test_pollen.py` | 79 backend green |
+| 2.2 | EE grid-enrichment as a validated toggle (`grid_source=ee_enriched`, hybrid) | ✅ | 1.6, 1.9 | `data_access/ee_enriched.py`, `data_access/__init__.py`, `config.py`, `tests/test_ee_enriched.py` | 84 backend green + **live: 630/900 cells enriched** |
+| 2.3 | Anomaly detection endpoint (`/anomalies`) — "patterns/anomalies" | ✅ | 1.6 | `routers/anomalies.py`, `main.py`, `tests/test_anomalies.py` | 87 backend green |
+| 2.4 | RAG grounding for `/ask` (retrieval over a small corpus) | ✅ | 1.1 | `knowledge.py`, `routers/ask.py`, `tests/test_rag.py` | 95 backend green |
+| 2.5 | Firestore persistence for saved scenarios (deck S8) | ✅ | — | `data_access/scenarios.py`, `routers/scenarios.py`, `config.py`, `requirements.txt`, `tests/test_scenarios.py` | 99 backend green + **live Firestore save/read verified** |
+| 2.6 | Observability — request IDs (propagated), in log lines + error bodies | ✅ | — | `hardening.py`, `tests/test_observability.py`, `tests/test_hardening.py` | 90 backend green |
+| 2.7 | Dead-dep cleanup (`maplibre-gl`, `db-dtypes`) + requirements hygiene | ✅ | — | `frontend/package.json`, `requirements.txt` | 30 FE + 87 BE green |
+| 2.8 | `/grid` latency — non-blocking background live-anchor refresh | ✅ | — | `realtime.py`, `tests/test_grid_latency.py` | 102 backend green + **live: 2767ms→596ms** |
 
-## Phase 3 — Low (UI-exposed / cosmetic): CesiumJS 3-D gated tab, PWA, a11y, docs polish
-(planned after Phase 2 completes)
+## Phase 2 — COMPLETE ✅
+All 8 tasks done and validated. **102 backend tests + 30 frontend tests green.** Live-verified: modeled pollen for India, EE-enriched grid toggle (630/900 real cells), `/anomalies`, RAG-grounded `/ask`, Firestore scenario persistence, request-id observability, dead-dep cleanup, non-blocking `/grid`. No UI changed; all API changes additive.
+
+**Open Phase-3 items surfaced during Phase 2 (UI-exposed):**
+- Wire a "Share scenario" UI action to `POST /scenarios` / `GET /scenarios/{id}` (backend ready).
+- Surface confidence bands + citations + `/anomalies` + modeled-pollen labels in the UI (backend ready).
+- CesiumJS 3-D gated tab, PWA (deck S8/S9/S16).
+- Residual `/grid` ~596ms is CPU serialization of 900 points — optional response-cache optimization.
+
+## Phase 3 — AI Urban Planning Decision Support System (in progress)
+Scope expanded by user: redesign the intervention engine, simulation workflow, budget optimizer, scenario comparison, and report generation (not a UI restyle — functional logic; visual language preserved).
+
+| # | Task | Status | Deps | Files | Validation |
+|---|---|---|---|---|---|
+| 3.1 | Context-aware intervention libraries (per-hazard) + `/interventions?hazard=` | ✅ | — | `sample_data/interventions.json` (46 items), `data.py`, `routers/interventions.py`, `tests/test_interventions.py` | 107 backend green |
+| 3.2 | Multi-metric impact model (temp/flood/AQI/canopy/carbon/water/capital/maintenance) | ✅ | 3.1 | `model.py`, `routers/simulate.py` | 107 backend green |
+| 3.3 | AI recommendation + budget optimizer (fixed budget → optimal mix, why/confidence) | ✅ | 3.1, 3.2 | `routers/optimize.py`, `main.py`, `tests/conftest.py`, `tests/test_optimize.py` | 111 backend green + live-previewed |
+| 3.4 | Frontend: context-aware panel, 2 budget workflows, rich sim output, A/B/C compare | ✅ | 3.1–3.3 | `services/api.ts`, `store/useClimaStore.ts`, `SimulateCard.tsx`, `App.tsx`, `App.css` | tsc 0 errors + 30 FE tests + live API verified (Gemini live) |
+| 3.5 | Professional report pipeline (HTML + DOCX + AI narrative + embedded maps + 7-step UX) | ✅ | 3.2–3.4 | `report.py`, `routers/report.py`, `services/api.ts`, `store`, `ProposalCard.tsx`, `App.css`, `tests/test_report.py` | 114 backend + 30 FE green; live `/report`+`/report/docx` verified (AI narrative + maps) |
+
+## Phase 3 — COMPLETE ✅
+All Parts 1–9 of the AI Urban Planning Decision Support System delivered.
+**114 backend tests + 30 frontend tests green; tsc clean; live-verified** (per-hazard libraries, budget optimizer with live Gemini, professional HTML/DOCX report with embedded Google Static Maps + AI narrative).
+
+Report architecture: **PDF via browser print** of the backend-rendered HTML (no fragile canvas capture); **maps via server-side Google Static Maps** downloaded + base64-embedded (works in any viewer + DOCX); **DOCX via python-docx**.
+
+GCP added this phase: enabled Static Maps API + added it to the server key (existing APIs preserved); `python-docx` runtime dep.
+
+Deferred UI stretch (optional, not required by the deck's core): CesiumJS 3-D gated tab, PWA, a11y polish.
 - **P3.x — Surface confidence bands + citations in the UI.** Backend already returns
   `confidence_detail` + `citations` on `/simulate` (task 1.2). A small SimulateCard
   addition should render the band + a "sources" disclosure to make the deck's

@@ -88,6 +88,10 @@ async def point(
     rt = await realtime_point(lat, lng)
     w, a, fc = rt.get("weather"), rt.get("air"), rt.get("forecast") or []
     pollen = rt.get("pollen")
+    pollen_live = pollen is not None
+    if pollen is None and cell:
+        # Google Pollen has no India coverage — model it from local vegetation.
+        pollen = synthetic_pollen(cell)
     live = rt.get("live", False)
     elev = rt.get("elevation") if rt.get("elevation") is not None else cell.get("elevation_m")
     area = rt.get("name") or cell.get("name") or "this area"
@@ -146,7 +150,9 @@ async def point(
         "prediction": "hourly-forecast heuristic",
         "model_baseline": ("BigQuery ML LST model (in-process)" if model_baseline_c is not None
                            else "LST model not available"),
-        "pollen": "Google Pollen API (live)" if pollen else "Pollen API (no data for this point)",
+        "pollen": ("Google Pollen API (live)" if pollen_live
+                   else "modeled — no live Pollen coverage (India)" if pollen
+                   else "Pollen API (no data for this point)"),
     }
 
     return PointResponse(

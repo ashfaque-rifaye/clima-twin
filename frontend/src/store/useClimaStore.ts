@@ -1,31 +1,84 @@
 import { create } from "zustand";
 import {
   ask as apiAsk,
+  generateReport,
   getConfig,
   getHotspots,
+  getInterventions,
   getPoint,
+  optimize as apiOptimize,
   proposal as apiProposal,
   recommend as apiRecommend,
+  reportDocx,
   simulate as apiSimulate,
   type Hotspot,
+  type InterventionItem,
+  type OptimizeResult,
   type PointData,
   type ProposalResp,
   type Recommendation,
+  type SimInterv,
   type SimResult,
 } from "../services/api";
 import { asHazard, HAZARD_META, type HazardId } from "../features/hazards/hazardMeta";
-import { mixToInterventions, PALETTE } from "../features/simulation/palette";
+import { PALETTE } from "../features/simulation/palette";
 
 export type Basemap = "map" | "satellite";
 export type AppView = "planner" | "citizen";
+export type BudgetMode = "manual" | "optimize";
 
-/** A saved simulation snapshot for A/B scenario comparison. */
+/** Build the /simulate payload from a mix, resolving each key's category from
+ *  the active catalogue (falling back to the static palette). */
+function toInterventions(mix: Record<string, number>, catalogue: InterventionItem[]): SimInterv[] {
+  return Object.entries(mix)
+    .filter(([, c]) => c > 0)
+    .map(([key, count]) => {
+      const type = catalogue.find((i) => i.key === key)?.type ??
+        PALETTE.find((p) => p.key === key)?.type ?? "";
+      return { type, species: key, count };
+    });
+}
+
+/** Assemble the /report plan payload — preferring an AI budget plan (opt),
+ *  else the current simulated mix. Returns null until there's something to report. */
+function buildReportPlan(s: {
+  opt: OptimizeResult | null; sim: SimResult | null;
+  mix: Record<string, number>; catalogue: InterventionItem[];
+}): Record<string, unknown> | null {
+  if (s.opt) {
+    return {
+      interventions: s.opt.interventions, impacts: s.opt.impacts, costs: s.opt.costs,
+      budget: s.opt.budget, trade_offs: s.opt.trade_offs, assumptions: s.opt.assumptions,
+      confidence: s.opt.confidence,
+    };
+  }
+  if (s.sim) {
+    const interventions = Object.entries(s.mix)
+      .filter(([, c]) => c > 0)
+      .map(([key, count]) => {
+        const item = s.catalogue.find((i) => i.key === key);
+        return { name: item?.name ?? key, species: key, count, capital_inr: (item?.capital_inr ?? 0) * count, why: "" };
+      });
+    return {
+      interventions, impacts: s.sim.impacts, costs: s.sim.costs,
+      trade_offs: s.sim.what_could_go_wrong, confidence: s.sim.confidence_detail,
+    };
+  }
+  return null;
+}
+
+/** A saved simulation snapshot for A/B/C scenario comparison (multi-metric). */
 export interface Scenario {
   label: string;
   hazard: HazardId;
   delta: number;
   people: number;
   cost: number;
+  aqi?: number;
+  flood?: number;
+  canopy?: number;
+  carbon?: number;
+  maintenance?: number;
 }
 
 interface ClimaState {
@@ -54,6 +107,11 @@ interface ClimaState {
   retryPoint: () => void;
   clearSelection: () => void;
 
+  /* context-aware intervention catalogue (per hazard) */
+  catalogue: InterventionItem[];
+  catalogueBusy: boolean;
+  loadCatalogue: () => Promise<void>;
+
   /* recommendation */
   reco: Recommendation | null;
   recoBusy: boolean;
@@ -62,6 +120,8 @@ interface ClimaState {
   mix: Record<string, number>;
   budget: number;
   setBudget: (n: number) => void;
+  budgetMode: BudgetMode;
+  setBudgetMode: (m: BudgetMode) => void;
   bump: (key: string, delta: number) => void;
   loadRecoIntoMix: () => void;
   sim: SimResult | null;
@@ -69,12 +129,27 @@ interface ClimaState {
   simError: boolean;
   runSim: () => Promise<void>;
 
-  /* proposal */
+  /* budget optimiser (Workflow B: fixed budget → optimal plan) */
+  opt: OptimizeResult | null;
+  optBusy: boolean;
+  optError: boolean;
+  runOptimize: () => Promise<void>;
+
+  /* proposal (legacy markdown) */
   prop: ProposalResp | null;
   propBusy: boolean;
   propError: boolean;
   runProposal: () => Promise<void>;
   closeProposal: () => void;
+
+  /* professional planning report (Parts 7–9) */
+  reportBusy: boolean;
+  reportError: boolean;
+  reportHtml: string | null;
+  reportTitle: string | null;
+  runReport: () => Promise<void>;
+  openReport: () => void;
+  downloadReportDocx: () => Promise<void>;
 
   /* ask */
   askAnswer: string | null;
@@ -82,9 +157,9 @@ interface ClimaState {
   runAsk: (q: string) => Promise<void>;
   clearAsk: () => void;
 
-  /* scenario compare (A/B) */
-  scenarios: { A: Scenario | null; B: Scenario | null };
-  saveScenario: (slot: "A" | "B") => void;
+  /* scenario compare (A/B/C, multi-metric) */
+  scenarios: { A: Scenario | null; B: Scenario | null; C: Scenario | null };
+  saveScenario: (slot: "A" | "B" | "C") => void;
   clearScenarios: () => void;
 
   /* scenario timeline */
@@ -112,8 +187,9 @@ export const useClimaStore = create<ClimaState>((set, get) => ({
   setView: (view) => set({ view }),
   hazard: "heat",
   setHazard: (hazard) => {
-    set({ hazard });
+    set({ hazard, sim: null, opt: null, mix: {}, reportHtml: null });
     get().loadHotspots();
+    get().loadCatalogue();
     const s = get().selected;
     if (s) get().select(s.lat, s.lng);
   },
@@ -127,6 +203,20 @@ export const useClimaStore = create<ClimaState>((set, get) => ({
       set({ hotspots: r.hotspots });
     } catch {
       set({ hotspots: [] });
+    }
+  },
+
+  catalogue: [],
+  catalogueBusy: false,
+  async loadCatalogue() {
+    set({ catalogueBusy: true });
+    try {
+      const r = await getInterventions(get().hazard);
+      set({ catalogue: r.interventions });
+    } catch {
+      set({ catalogue: [] });
+    } finally {
+      set({ catalogueBusy: false });
     }
   },
 
@@ -146,6 +236,9 @@ export const useClimaStore = create<ClimaState>((set, get) => ({
       prop: null,
       propError: false,
       mix: {},
+      opt: null,
+      reportHtml: null,
+      reportError: false,
     });
     const stillCurrent = () => get().selected?.lat === lat && get().selected?.lng === lng;
     // live point
@@ -179,8 +272,10 @@ export const useClimaStore = create<ClimaState>((set, get) => ({
   recoBusy: false,
 
   mix: {},
-  budget: 500000,
+  budget: 5_000_000,
   setBudget: (budget) => set({ budget }),
+  budgetMode: "manual",
+  setBudgetMode: (budgetMode) => set({ budgetMode }),
   bump: (key, delta) =>
     set((st) => ({ mix: { ...st.mix, [key]: Math.max(0, (st.mix[key] || 0) + delta) } })),
   loadRecoIntoMix: () => {
@@ -188,8 +283,8 @@ export const useClimaStore = create<ClimaState>((set, get) => ({
     if (!reco) return;
     const m: Record<string, number> = {};
     reco.interventions.forEach((i) => {
-      const item = PALETTE.find((p) => p.species === (i.species ?? i.type) || p.type === i.type);
-      if (item) m[item.key] = i.count;
+      const key = i.species ?? i.type;
+      if (key) m[key] = i.count;
     });
     set({ mix: m });
   },
@@ -197,9 +292,9 @@ export const useClimaStore = create<ClimaState>((set, get) => ({
   simBusy: false,
   simError: false,
   async runSim() {
-    const { selected, mix, budget } = get();
+    const { selected, mix, budget, catalogue } = get();
     if (!selected) return;
-    const interventions = mixToInterventions(mix);
+    const interventions = toInterventions(mix, catalogue);
     if (!interventions.length) return;
     set({ simBusy: true, simError: false });
     try {
@@ -211,6 +306,26 @@ export const useClimaStore = create<ClimaState>((set, get) => ({
     }
   },
 
+  opt: null,
+  optBusy: false,
+  optError: false,
+  async runOptimize() {
+    const { selected, hazard, budget } = get();
+    if (!selected) return;
+    set({ optBusy: true, optError: false });
+    try {
+      const opt = await apiOptimize(selected.lat, selected.lng, hazard, budget, HAZARD_META[hazard].goal);
+      // Load the optimised plan into the mix so the planner can review, tweak and simulate it.
+      const m: Record<string, number> = {};
+      opt.interventions.forEach((i) => { m[i.species] = i.count; });
+      set({ opt, mix: m });
+    } catch {
+      set({ opt: null, optError: true });
+    } finally {
+      set({ optBusy: false });
+    }
+  },
+
   prop: null,
   propBusy: false,
   propError: false,
@@ -219,7 +334,7 @@ export const useClimaStore = create<ClimaState>((set, get) => ({
     if (!selected) return;
     set({ propBusy: true, propError: false });
     try {
-      const interventions = mixToInterventions(mix);
+      const interventions = toInterventions(mix, get().catalogue);
       set({
         prop: await apiProposal(point?.area_name ?? "Selected area", {
           area: point?.area_name,
@@ -237,6 +352,58 @@ export const useClimaStore = create<ClimaState>((set, get) => ({
   },
   closeProposal: () => set({ prop: null }),
 
+  reportBusy: false,
+  reportError: false,
+  reportHtml: null,
+  reportTitle: null,
+  async runReport() {
+    const st = get();
+    const { selected, point, hazard } = st;
+    if (!selected) return;
+    const plan = buildReportPlan(st);
+    if (!plan) return; // need a simulation or an AI plan first
+    set({ reportBusy: true, reportError: false, reportHtml: null });
+    try {
+      const res = await generateReport({
+        area_name: point?.area_name ?? "Selected area",
+        lat: selected.lat, lng: selected.lng, hazard, point: point ?? {}, plan,
+      });
+      set({ reportHtml: res.html, reportTitle: res.title, reportBusy: false });
+    } catch {
+      set({ reportError: true, reportBusy: false });
+    }
+  },
+  openReport() {
+    const html = get().reportHtml;
+    if (!html) return;
+    const w = window.open("", "_blank");
+    if (!w) return;
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+  },
+  async downloadReportDocx() {
+    const st = get();
+    const { selected, point, hazard } = st;
+    if (!selected) return;
+    const plan = buildReportPlan(st);
+    if (!plan) return;
+    try {
+      const blob = await reportDocx({
+        area_name: point?.area_name ?? "Selected area",
+        lat: selected.lat, lng: selected.lng, hazard, point: point ?? {}, plan,
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `ClimaTwin-Report-${(point?.area_name ?? "area").replace(/[^a-z0-9]+/gi, "-")}.docx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      set({ reportError: true });
+    }
+  },
+
   askAnswer: null,
   askBusy: false,
   async runAsk(q) {
@@ -252,20 +419,26 @@ export const useClimaStore = create<ClimaState>((set, get) => ({
   },
   clearAsk: () => set({ askAnswer: null }),
 
-  scenarios: { A: null, B: null },
+  scenarios: { A: null, B: null, C: null },
   saveScenario: (slot) => {
     const { sim, point, hazard } = get();
     if (!sim) return;
+    const imp = sim.impacts;
     const snap: Scenario = {
       label: point?.area_name ?? "Selected area",
       hazard,
       delta: sim.delta_feels_like_c,
       people: sim.people_helped,
       cost: sim.cost_inr,
+      aqi: imp?.aqi_improvement,
+      flood: imp?.flood_managed_m3,
+      canopy: imp?.canopy_added_m2,
+      carbon: imp?.carbon_seq_kg_year,
+      maintenance: sim.costs?.maintenance_inr_year,
     };
     set((st) => ({ scenarios: { ...st.scenarios, [slot]: snap } }));
   },
-  clearScenarios: () => set({ scenarios: { A: null, B: null } }),
+  clearScenarios: () => set({ scenarios: { A: null, B: null, C: null } }),
 
   hour: 15,
   playing: false,

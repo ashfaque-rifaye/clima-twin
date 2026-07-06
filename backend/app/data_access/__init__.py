@@ -6,12 +6,16 @@ import logging
 
 from ..config import settings
 from .bigquery_repo import BigQueryGridRepository
+from .ee_enriched import EEEnrichedGridRepository
 from .grid_repository import GridRepository
 from .synthetic import SyntheticGridRepository
 
 log = logging.getLogger("climatwin.data_access")
 
-__all__ = ["GridRepository", "SyntheticGridRepository", "BigQueryGridRepository", "build_grid_repository"]
+__all__ = [
+    "GridRepository", "SyntheticGridRepository", "BigQueryGridRepository",
+    "EEEnrichedGridRepository", "build_grid_repository",
+]
 
 
 def _resolve_project() -> str | None:
@@ -34,17 +38,21 @@ def build_grid_repository() -> GridRepository:
     if mode != "synthetic":
         project = _resolve_project()
         if project:
-            repo = BigQueryGridRepository(project, settings.bq_dataset, settings.bq_grid_table)
+            if mode == "ee_enriched":
+                repo: GridRepository = EEEnrichedGridRepository(
+                    project, settings.bq_dataset, settings.bq_grid_table, settings.bq_ee_table)
+            else:
+                repo = BigQueryGridRepository(project, settings.bq_dataset, settings.bq_grid_table)
             try:
                 cells = repo.all_cells()  # probe + warm the instance cache
                 if cells:
                     return repo
-                log.warning("BigQuery grid table %s is empty — using synthetic grid", repo.source)
+                log.warning("grid source %s returned no cells — using synthetic grid", repo.source)
             except Exception as exc:
-                emit = log.error if mode == "bigquery" else log.info
-                emit("BigQuery grid unavailable (%s: %s) — using synthetic grid",
-                     type(exc).__name__, exc)
-        elif mode == "bigquery":
-            log.error("grid_source=bigquery but no GCP project could be resolved — using synthetic grid")
+                emit = log.error if mode in ("bigquery", "ee_enriched") else log.info
+                emit("grid source '%s' unavailable (%s: %s) — using synthetic grid",
+                     mode, type(exc).__name__, exc)
+        elif mode in ("bigquery", "ee_enriched"):
+            log.error("grid_source=%s but no GCP project could be resolved — using synthetic grid", mode)
 
     return SyntheticGridRepository()

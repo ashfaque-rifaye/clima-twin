@@ -6,6 +6,7 @@ $0 budget intact. If the service ever scales out, swap for a shared store.
 """
 import logging
 import time
+import uuid
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -14,6 +15,12 @@ log = logging.getLogger("climatwin")
 
 # path prefixes that are static content — never rate-limited
 _STATIC_PREFIXES = ("/assets/", "/favicon", "/icons/", "/manifest")
+
+
+def request_id(request: Request) -> str:
+    """Propagate an inbound correlation id, or mint a short one."""
+    inbound = request.headers.get("x-request-id")
+    return inbound.strip()[:64] if inbound else uuid.uuid4().hex[:12]
 
 _SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
@@ -59,29 +66,33 @@ def install(app: FastAPI, rate_per_minute: int) -> None:
         path = request.url.path
         static = path.startswith(_STATIC_PREFIXES) or "." in path.rsplit("/", 1)[-1]
 
+        rid = request_id(request)
+        request.state.request_id = rid  # available to handlers
+        base_headers = {"X-Request-Id": rid, **_SECURITY_HEADERS}
+
         if not static and not limiter.allow(client_ip(request)):
             return JSONResponse(
                 status_code=429,
-                content={"detail": "Rate limit exceeded — try again in a minute."},
-                headers={"Retry-After": "60", **_SECURITY_HEADERS},
+                content={"detail": "Rate limit exceeded — try again in a minute.", "request_id": rid},
+                headers={"Retry-After": "60", **base_headers},
             )
 
         start = time.perf_counter()
         try:
             response = await call_next(request)
         except Exception:
-            log.exception("unhandled error on %s %s", request.method, path)
+            log.exception("[%s] unhandled error on %s %s", rid, request.method, path)
             return JSONResponse(
                 status_code=500,
-                content={"detail": "Internal server error."},
-                headers=_SECURITY_HEADERS,
+                content={"detail": "Internal server error.", "request_id": rid},
+                headers=base_headers,
             )
         if not static:
             log.info(
-                "%s %s -> %s (%.0f ms)",
-                request.method, path, response.status_code,
+                "[%s] %s %s -> %s (%.0f ms)",
+                rid, request.method, path, response.status_code,
                 (time.perf_counter() - start) * 1000,
             )
-        for k, v in _SECURITY_HEADERS.items():
+        for k, v in base_headers.items():
             response.headers.setdefault(k, v)
         return response

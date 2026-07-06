@@ -29,8 +29,17 @@ def _load(name: str):
 
 
 SAMPLE_GRID: list[dict] = _load("sample_grid.json")
-SPECIES: list[dict] = _load("species.json")
-SPECIES_BY_KEY: dict[str, dict] = {s["key"]: s for s in SPECIES}
+# Context-aware intervention catalogue (per-hazard libraries, multi-metric
+# coefficients). Supersedes the old species.json; legacy keys are retained so
+# existing /simulate and /recommend calls keep resolving.
+INTERVENTIONS: list[dict] = _load("interventions.json")
+SPECIES: list[dict] = INTERVENTIONS  # backward-compatible alias
+SPECIES_BY_KEY: dict[str, dict] = {s["key"]: s for s in INTERVENTIONS}
+
+
+def interventions_for(hazard: str) -> list[dict]:
+    """Interventions whose primary hazard matches (the per-mode library)."""
+    return [i for i in INTERVENTIONS if i.get("hazard") == hazard]
 
 
 ANCHORS = [

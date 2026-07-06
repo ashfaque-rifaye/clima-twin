@@ -69,6 +69,23 @@ export interface HotspotsResp { hazard: string; hotspots: Hotspot[]; source: str
 
 export interface SimInterv { type: string; species?: string; count: number; }
 
+/** Multi-metric decision readout (Part 6). */
+export interface Impacts {
+  temp_reduction_c: number;
+  aqi_improvement: number;
+  flood_managed_m3: number;
+  canopy_added_m2: number;
+  carbon_seq_kg_year: number;
+  water_retention_l: number;
+  people_benefited: number;
+}
+export interface Costs {
+  capital_inr: number;
+  maintenance_inr_year: number;
+  five_year_inr: number;
+  ten_year_inr: number;
+}
+
 export interface SimResult {
   area_name?: string;
   baseline_feels_like_c?: number;
@@ -81,7 +98,43 @@ export interface SimResult {
   air_quality_change?: string;
   flood_change?: string;
   confidence: string;
+  confidence_detail?: unknown;
+  citations?: { factor: string; source: string; [k: string]: unknown }[];
+  impacts?: Impacts;
+  costs?: Costs;
   what_could_go_wrong: string[];
+  source: string;
+}
+
+/** Context-aware intervention catalogue (Parts 1–2). */
+export interface InterventionItem {
+  key: string;
+  name: string;
+  type: string;
+  unit: string;
+  step: number;
+  note: string;
+  capital_inr: number;
+  maintenance_inr_year: number;
+  primary_metric: string;
+  primary_coefficient: number;
+  co_benefits: string[];
+}
+export interface InterventionsResp { hazard: string; count: number; interventions: InterventionItem[]; }
+
+/** Budget optimiser result (Parts 3–4). */
+export interface OptimizeResult {
+  area_name?: string;
+  hazard: string;
+  interventions: { type: string; species: string; count: number; name: string; capital_inr: number; why: string }[];
+  impacts: Impacts;
+  costs: Costs;
+  budget: { budget_inr: number; allocated_inr: number; remaining_inr: number; over_budget: boolean; utilization_pct: number };
+  roi: { primary_metric: string; primary_per_lakh: number; people_per_lakh: number; cost_per_person_inr: number | null };
+  rationale: string;
+  assumptions: string[];
+  confidence?: unknown;
+  trade_offs: string[];
   source: string;
 }
 
@@ -176,3 +229,21 @@ export const recommend = (lat: number, lng: number, goal: string, budget_inr?: n
 export const ask = (question: string) => postJSON<AskResp>("/ask", { question });
 export const proposal = (area_name: string, plan: unknown) =>
   postJSON<ProposalResp>("/proposal", { area_name, plan });
+
+export const getInterventions = (hazard: string) =>
+  getJSON<InterventionsResp>(`/interventions?hazard=${hazard}`);
+export const optimize = (lat: number, lng: number, hazard: string, budget_inr: number, goal = "") =>
+  postJSON<OptimizeResult>("/optimize", { lat, lng, hazard, budget_inr, goal });
+
+/** Professional planning report (Parts 7–9). */
+export interface ReportPayload {
+  area_name: string; lat: number; lng: number; hazard: string;
+  point: unknown; plan: unknown;
+}
+export const generateReport = (p: ReportPayload) =>
+  postJSON<{ title: string; html: string }>("/report", p);
+export async function reportDocx(p: ReportPayload): Promise<Blob> {
+  const r = await fetch(`${BASE}/report/docx`, { method: "POST", headers: headers(true), body: JSON.stringify(p) });
+  if (!r.ok) throw new Error(`report docx ${r.status}`);
+  return r.blob();
+}

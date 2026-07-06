@@ -30,4 +30,7 @@ def test_unhandled_error_returns_json_500(client, monkeypatch):
     monkeypatch.setattr(point_mod, "realtime_point", boom)
     r = client.get("/point?lat=13.0&lng=80.2")
     assert r.status_code == 500
-    assert r.json() == {"detail": "Internal server error."}
+    body = r.json()
+    assert body["detail"] == "Internal server error."
+    assert body["request_id"]  # correlation id returned for support/debugging
+    assert r.headers["X-Request-Id"] == body["request_id"]

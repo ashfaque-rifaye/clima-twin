@@ -35,6 +35,8 @@ class SimulateResponse(BaseModel):
     confidence: str = "illustrative (sample model)"
     confidence_detail: dict | None = None  # uncertainty bands per headline number
     citations: list[dict] = Field(default_factory=list)  # cited coefficient sources
+    impacts: dict | None = None  # multi-metric: temp/aqi/flood/canopy/carbon/water/people
+    costs: dict | None = None    # capital + maintenance + 5yr/10yr
     what_could_go_wrong: list[str] = Field(default_factory=list)
     source: str = "sample"
 
@@ -50,6 +52,8 @@ def simulate(req: SimulateRequest):
         over_budget=bool(req.budget_inr is not None and eff["cost_inr"] > req.budget_inr),
         confidence_detail=eff.get("confidence"),
         citations=eff.get("citations", []),
+        impacts=eff.get("impacts"),
+        costs=eff.get("costs"),
         what_could_go_wrong=eff["what_could_go_wrong"] or ["No major risks flagged for this mix."],
         baseline_feels_like_c=eff["baseline_feels_like_c"],
         projected_feels_like_c=eff["projected_feels_like_c"],

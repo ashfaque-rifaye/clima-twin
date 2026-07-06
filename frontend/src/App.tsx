@@ -13,13 +13,15 @@ const DEFAULT_POINT = { lat: 13.0827, lng: 80.2707 }; // Chennai Marina referenc
 export default function App() {
   const loadConfig = useClimaStore((s) => s.loadConfig);
   const loadHotspots = useClimaStore((s) => s.loadHotspots);
+  const loadCatalogue = useClimaStore((s) => s.loadCatalogue);
   const select = useClimaStore((s) => s.select);
 
   useEffect(() => {
     void loadConfig();
     void loadHotspots();
+    void loadCatalogue();
     void select(DEFAULT_POINT.lat, DEFAULT_POINT.lng);
-  }, [loadConfig, loadHotspots, select]);
+  }, [loadConfig, loadHotspots, loadCatalogue, select]);
 
   return (
     <div className="app">

@@ -1,38 +1,49 @@
-"""Shared cooling-effect computation (used by /simulate and /recommend).
+"""Shared intervention-impact computation (used by /simulate and /recommend).
 
-Transparent + labeled illustrative. Day 3: swap the temperature delta for a
-BigQuery ML / scikit-learn LST model trained on the real Chennai grid.
+Multi-metric and hazard-aware: every intervention in the catalogue carries
+coefficients for temperature, air quality, flood volume managed, green area,
+carbon and water, plus capital and maintenance cost. This function accumulates
+them into a full decision readout — headline cooling for backward compatibility,
+plus an `impacts` and `costs` breakdown for the planning report.
+
+Transparent + labelled illustrative; the temperature line is cross-checked
+against the trained BigQuery ML LST model.
 """
 from .data import SPECIES_BY_KEY
 from .ml import MODEL as _LST
 
-_CANOPY_M2 = {"very_high": 80, "high": 55, "medium": 35, "low": 20}
 DELTA_CEILING_C = 6.0
+AQI_CEILING = 40.0
 
-# Relative uncertainty carried on the headline estimates. Canopy/surface cooling
-# coefficients in the literature span a wide range, so we report a conservative
-# band rather than false-precision point estimates. These bands are what the
-# deck refers to as "confidence bands on every number" (S2/S3/S5).
+# Relative uncertainty carried on the headline estimates. Coefficients are
+# literature-informed point estimates with wide real-world spread, so we report
+# a conservative band rather than false precision (deck S2/S3/S5).
 _DELTA_REL_UNCERTAINTY = 0.35
 _PEOPLE_REL_UNCERTAINTY = 0.25
 
 
 def _band(expected: float, rel: float, ndigits: int = 1) -> dict:
-    """A symmetric uncertainty band around a point estimate."""
     lo = round(max(0.0, expected * (1 - rel)), ndigits)
     hi = round(expected * (1 + rel), ndigits)
-    return {
-        "expected": round(expected, ndigits),
-        "low": lo,
-        "high": hi,
-        "rel_uncertainty": rel,
-    }
+    return {"expected": round(expected, ndigits), "low": lo, "high": hi, "rel_uncertainty": rel}
+
+
+def _primary_metric(spec: dict) -> tuple[str, float]:
+    """The headline coefficient for an intervention's hazard (for citations)."""
+    hazard = spec.get("hazard", "heat")
+    if hazard == "air":
+        return "AQI points improved / unit", spec.get("aqi", 0.0)
+    if hazard == "flood":
+        return "m³ stormwater managed / unit", spec.get("flood_m3", 0.0)
+    if hazard == "green":
+        return "m² green added / unit", spec.get("green_m2", 0.0)
+    return "°C cooling / unit", spec.get("cooling_c", 0.0)
 
 
 def compute_effect(cell: dict, interventions: list[dict]) -> dict:
-    delta = cost = area = 0.0
+    temp = aqi = flood_m3 = green_m2 = carbon = water = 0.0
+    capital = maint = 0.0
     risks: list[str] = []
-    improves_air = reduces_flood = False
     citations: list[dict] = []
     _cited: set[str] = set()
 
@@ -41,57 +52,70 @@ def compute_effect(cell: dict, interventions: list[dict]) -> dict:
         if not spec:
             continue
         count = max(int(iv.get("count", 0)), 0)
-        per = spec.get("cooling_c_per_tree") or spec.get("cooling_c_per_unit") or 0.0
-        delta += per * count
-        cost += spec.get("cost_inr_per_unit", 0) * count
+        if count == 0:
+            continue
 
-        # Aggregate the literature citation for every coefficient actually used.
-        if count > 0 and spec["key"] not in _cited and spec.get("source_ref"):
+        temp += spec.get("cooling_c", 0.0) * count
+        aqi += spec.get("aqi", 0.0) * count
+        flood_m3 += spec.get("flood_m3", 0.0) * count
+        green_m2 += spec.get("green_m2", 0.0) * count
+        carbon += spec.get("carbon_kg_yr", 0.0) * count
+        water += spec.get("water_l", 0.0) * count
+        capital += spec.get("capital_inr", 0.0) * count
+        maint += spec.get("maint_inr_yr", 0.0) * count
+
+        for r in spec.get("risks", []):
+            if r and r not in risks:
+                risks.append(r)
+
+        if spec["key"] not in _cited and spec.get("source_ref"):
+            metric, coeff = _primary_metric(spec)
             citations.append({
                 "factor": spec["name"],
-                "coefficient_c_per_unit": per,
+                "metric": metric,
+                "coefficient": coeff,
+                "coefficient_c_per_unit": spec.get("cooling_c", 0.0),  # backward-compat
                 "source": spec["source_ref"],
             })
             _cited.add(spec["key"])
 
-        if spec["type"] == "tree":
-            area += _CANOPY_M2.get(spec.get("shade", "medium"), 35) * count
-            improves_air = True
-            if not spec.get("native", False):
-                risks.append(f"{spec['name']} is non-native - more maintenance/water.")
-            if spec.get("water_need") == "high":
-                risks.append(f"{spec['name']} is thirsty - risky in Chennai summers.")
-        if spec.get("flood_reduction") in ("medium", "high"):
-            reduces_flood = True
-        if spec["type"] == "misting":
-            risks.append("Misting points consume water - meter usage in droughts.")
-
-    delta = min(delta, DELTA_CEILING_C)
+    temp = min(temp, DELTA_CEILING_C)
+    aqi = min(aqi, AQI_CEILING)
     baseline = cell["feels_like_c"]
     people = cell.get("bus_commuters_daily", 0) + int(cell.get("population", 0) * 0.05)
 
+    impacts = {
+        "temp_reduction_c": round(temp, 1),
+        "aqi_improvement": round(aqi, 1),
+        "flood_managed_m3": round(flood_m3, 0),
+        "canopy_added_m2": round(green_m2, 0),
+        "carbon_seq_kg_year": round(carbon, 0),
+        "water_retention_l": round(water, 0),
+        "people_benefited": people,
+    }
+    costs = {
+        "capital_inr": round(capital, 0),
+        "maintenance_inr_year": round(maint, 0),
+        "five_year_inr": round(capital + 5 * maint, 0),
+        "ten_year_inr": round(capital + 10 * maint, 0),
+    }
+
     return {
+        # --- backward-compatible headline fields ---
         "baseline_feels_like_c": baseline,
-        "projected_feels_like_c": round(baseline - delta, 1),
-        "delta_feels_like_c": round(delta, 1),
-        "cooled_area_m2": round(area, 0),
+        "projected_feels_like_c": round(baseline - temp, 1),
+        "delta_feels_like_c": round(temp, 1),
+        "cooled_area_m2": round(green_m2, 0),
         "people_helped": people,
-        "cost_inr": round(cost, 0),
-        "air_quality_change": (
-            f"~{min(8, max(2, int(delta * 2)))} AQI points lower (canopy traps PM2.5)"
-            if improves_air else None
-        ),
-        "flood_change": "monsoon waterlogging reduced (more permeable surface)" if reduces_flood else None,
+        "cost_inr": round(capital, 0),
+        "air_quality_change": (f"~{round(aqi)} AQI points lower" if aqi >= 1 else None),
+        "flood_change": (f"~{round(flood_m3)} m³ stormwater managed per event" if flood_m3 > 0 else None),
         "what_could_go_wrong": risks,
-        # Explainability: uncertainty band on every headline number + the
-        # literature sources behind each coefficient used (deck S2/S3/S5).
         "confidence": {
             "level": "illustrative",
             "method": "literature-informed coefficient model (heuristic, not measured)",
-            "delta_feels_like_c": _band(delta, _DELTA_REL_UNCERTAINTY, ndigits=1),
+            "delta_feels_like_c": _band(temp, _DELTA_REL_UNCERTAINTY, ndigits=1),
             "people_helped": _band(people, _PEOPLE_REL_UNCERTAINTY, ndigits=0),
-            # Provenance: the trained BigQuery ML LST model that backs the
-            # baseline/urban-form analysis (None when the card isn't present).
             "lst_model": ({
                 "source": _LST.card.get("source"),
                 "type": _LST.card.get("type"),
@@ -99,4 +123,7 @@ def compute_effect(cell: dict, interventions: list[dict]) -> dict:
             } if _LST.available else None),
         },
         "citations": citations,
+        # --- multi-metric decision readout ---
+        "impacts": impacts,
+        "costs": costs,
     }

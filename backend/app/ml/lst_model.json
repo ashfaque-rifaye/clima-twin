@@ -1,0 +1,35 @@
+{
+  "name": "lst_model",
+  "type": "BigQuery ML LINEAR_REG (served in-process as exported linear weights)",
+  "label": "feels_like_c",
+  "features": [
+    "green_cover_pct",
+    "road_pressure",
+    "elevation_m",
+    "waterway_proximity"
+  ],
+  "intercept": 42.061342,
+  "weights": {
+    "green_cover_pct": -0.161531,
+    "road_pressure": 6.706759,
+    "elevation_m": 0.00728,
+    "waterway_proximity": 1.378741
+  },
+  "metrics": {
+    "r2_score": 0.7031,
+    "mean_absolute_error": 1.0371,
+    "root_mean_squared_error": 1.2804
+  },
+  "training_rows": 900,
+  "trained_at": "2026-07-06T06:30:05+00:00",
+  "source": "climatwin-chennai.climatwin.lst_model",
+  "bqml": {
+    "model": "climatwin-chennai.climatwin.lst_model",
+    "metrics": {
+      "r2_score": 0.7031,
+      "mean_absolute_error": 1.0371,
+      "root_mean_squared_error": 1.2804
+    }
+  },
+  "note": "Trained in BigQuery ML on the Chennai grid; explainable linear coefficients are \u00b0C per unit feature. Served in-process for $0 inference."
+}

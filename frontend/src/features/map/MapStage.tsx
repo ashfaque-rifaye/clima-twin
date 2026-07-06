@@ -120,9 +120,8 @@ export default function MapStage() {
   const airSeeds = useMemo<AirSeed[]>(() => {
     if (hazard !== "air" || !grid.length) return [];
     return grid
-      .filter((p) => p.weight > 0.45)
-      .filter((_, i) => i % 2 === 0)
-      .slice(0, 260)
+      .filter((p) => p.weight > 0.35)
+      .slice(0, 340)
       .map((p, i) => {
         const h1 = Math.sin(i * 12.9898) * 43758.5453;
         const h2 = Math.sin(i * 78.233) * 24634.6345;

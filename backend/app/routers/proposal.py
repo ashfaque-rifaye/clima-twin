@@ -4,9 +4,33 @@ import json
 from fastapi import APIRouter
 from pydantic import BaseModel, Field, field_validator
 
-from ..gemini import generate, gemini_available
+from ..gemini import generate_json, gemini_available
 
 router = APIRouter(tags=["proposal"])
+
+
+class _AIProposal(BaseModel):
+    """Structured proposal sections — the server renders the markdown, so the
+    section layout is guaranteed regardless of model formatting."""
+    problem: str = ""
+    intervention: str = ""
+    expected_impact: str = ""
+    cost: str = ""
+    risks: list[str] = []
+    recommendation: str = ""
+
+
+def _render(title: str, p: dict) -> str:
+    risks = p.get("risks") or ["—"]
+    return (
+        f"# {title}\n\n"
+        f"## Problem\n{p.get('problem', '').strip()}\n\n"
+        f"## Proposed intervention\n{p.get('intervention', '').strip()}\n\n"
+        f"## Expected impact\n{p.get('expected_impact', '').strip()}\n\n"
+        f"## Cost\n{p.get('cost', '').strip()}\n\n"
+        f"## Risks & mitigation\n" + "\n".join(f"- {r}" for r in risks) + "\n\n"
+        f"## Recommendation\n{p.get('recommendation', '').strip()}\n"
+    )
 
 
 class ProposalRequest(BaseModel):
@@ -33,15 +57,16 @@ def proposal(req: ProposalRequest):
 
     ai = None
     if gemini_available():
-        ai = generate(
-            "Draft a concise one-page proposal in markdown for a Chennai city planner to fund a "
+        ai = generate_json(
+            "Draft a concise one-page funding proposal for a Chennai city planner to fund a "
             f"cooling intervention. Area: {req.area_name}. Plan + projected impact (JSON): "
-            f"{json.dumps(req.plan)}. Sections: Problem, Proposed Intervention, Expected Impact, "
-            "Cost, Risks & Mitigation, Recommendation. Tight and concrete."
+            f"{json.dumps(req.plan)}. Return JSON with fields: problem, intervention, "
+            "expected_impact, cost, risks (list of strings), recommendation. Tight and concrete.",
+            response_schema=_AIProposal,
         )
 
-    if ai:
-        return ProposalResponse(title=title, markdown=ai, source="gemini")
+    if isinstance(ai, dict) and ai.get("problem"):
+        return ProposalResponse(title=title, markdown=_render(title, ai), source="gemini")
 
     eff = req.plan.get("effect", {}) if isinstance(req.plan, dict) else {}
     md = (

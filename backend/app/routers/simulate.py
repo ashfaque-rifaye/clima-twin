@@ -33,6 +33,8 @@ class SimulateResponse(BaseModel):
     air_quality_change: str | None = None
     flood_change: str | None = None
     confidence: str = "illustrative (sample model)"
+    confidence_detail: dict | None = None  # uncertainty bands per headline number
+    citations: list[dict] = Field(default_factory=list)  # cited coefficient sources
     what_could_go_wrong: list[str] = Field(default_factory=list)
     source: str = "sample"
 
@@ -46,6 +48,8 @@ def simulate(req: SimulateRequest):
     return SimulateResponse(
         area_name=cell["name"],
         over_budget=bool(req.budget_inr is not None and eff["cost_inr"] > req.budget_inr),
+        confidence_detail=eff.get("confidence"),
+        citations=eff.get("citations", []),
         what_could_go_wrong=eff["what_could_go_wrong"] or ["No major risks flagged for this mix."],
         baseline_feels_like_c=eff["baseline_feels_like_c"],
         projected_feels_like_c=eff["projected_feels_like_c"],

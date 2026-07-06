@@ -176,6 +176,19 @@
 .ai-md ul { margin: 0 0 8px; padding-left: 18px; }
 .ai-md li { margin-bottom: 3px; }
 
+/* skeleton shimmer + progressive loading states */
+.skel { position: relative; overflow: hidden; border-radius: 6px; background: rgba(148, 170, 195, .14); }
+.skel::after { content: ""; position: absolute; inset: 0; transform: translateX(-100%); background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .14), transparent); animation: skel-shimmer 1.3s infinite; }
+@keyframes skel-shimmer { 100% { transform: translateX(100%); } }
+.skel-hero { width: 128px; height: 34px; }
+.skel-line { height: 11px; margin: 7px 0; }
+.skel-val { width: 46px; height: 18px; display: inline-block; }
+.load-steps { display: flex; align-items: center; gap: 7px; margin-top: 8px; font-size: 11.5px; color: #8fb0cf; font-family: "Roboto Mono", monospace; }
+.load-steps::before { content: ""; width: 9px; height: 9px; border-radius: 50%; border: 2px solid rgba(66, 133, 244, .35); border-top-color: #4285f4; animation: load-spin .8s linear infinite; flex: 0 0 auto; }
+@keyframes load-spin { 100% { transform: rotate(360deg); } }
+.mc-src { margin-top: 5px; font-size: 10px; letter-spacing: .02em; color: #7d92a8; font-family: "Roboto Mono", monospace; }
+.mc-src b { color: #7fe0c0; font-weight: 600; }
+
 /* inline error + retry (offline-safe UI) */
 .inline-err { margin-top: 9px; padding: 8px 11px; border: 1px solid rgba(234, 67, 53, .38); border-radius: var(--r-md); background: rgba(234, 67, 53, .1); color: #ffb4ad; font-size: 12.5px; }
 .inline-err button { border: none; background: none; padding: 0; color: #fff; font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer; }

@@ -5,6 +5,7 @@ headers, validated inputs, honest data-source labels. Everything is designed
 to run on free Google tiers.
 """
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -21,10 +22,35 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 
+log = logging.getLogger("climatwin")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """On startup, load the analysis grid from its configured source (BigQuery
+    with synthetic fallback). The grid is mutated in place so every module that
+    imported ``GRID`` by reference sees the loaded data. Any failure keeps the
+    synthetic grid already built at import — the app must always start."""
+    app.state.grid_source = "synthetic-urban-form-v1"
+    try:
+        from . import data
+        from .data_access import build_grid_repository
+        repo = build_grid_repository()
+        cells = repo.all_cells()
+        if cells:
+            data.GRID[:] = cells  # in-place: holders of the reference update too
+            app.state.grid_source = repo.source
+            log.info("grid ready: %d cells from %s", len(cells), repo.source)
+    except Exception:
+        log.exception("grid init failed — keeping synthetic grid")
+    yield
+
+
 app = FastAPI(
     title="ClimaTwin API",
     version="0.2.0",
     description="Urban microclimate decision engine — heat, flood, air. Free-tier Google stack.",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -59,7 +85,16 @@ def health():
         "ai": "gemini-flash (ai-studio free tier)",
         "gemini": gemini_available(),
         "live_data": bool(settings.server_api_key or settings.google_maps_api_key),
+        "grid_source": getattr(app.state, "grid_source", "synthetic-urban-form-v1"),
     }
+
+
+@app.get("/model", tags=["meta"])
+def model_info():
+    """Trained cooling-model card (BigQuery ML LINEAR_REG) — features, learned
+    weights (the explanation), and evaluation metrics."""
+    from .ml import MODEL as LST_MODEL
+    return LST_MODEL.info()
 
 
 @app.get("/config", tags=["meta"])

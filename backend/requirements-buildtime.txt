@@ -1,0 +1,10 @@
+# Build-time only — NOT installed in the runtime Cloud Run image (keeps it lean).
+# Used by the offline data-pipeline scripts:
+#   scripts/export_earth_engine.py   (Earth Engine → BigQuery: LST/NDVI/NDBI/DEM)
+#   scripts/train_lst_model_bqml.py  (BigQuery ML training; also uses google-cloud-bigquery)
+#   scripts/load_grid_to_bigquery.py (seed grid → BigQuery)
+#
+# Install into the build/dev environment only:
+#   pip install -r requirements-buildtime.txt
+earthengine-api>=1.0.0
+google-cloud-bigquery==3.27.0

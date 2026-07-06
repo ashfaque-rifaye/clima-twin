@@ -6,6 +6,7 @@ None so /point can fall back to sample data.
 import asyncio
 import logging
 import time
+from collections import OrderedDict
 
 import httpx
 
@@ -13,11 +14,31 @@ from .config import settings
 
 log = logging.getLogger("climatwin.realtime")
 
-_cache: dict[tuple, tuple[float, dict]] = {}
+# Per-coordinate live-readout cache. Bounded LRU so a flood of distinct
+# coordinates (many clicks, or abuse) can't grow memory without limit.
+_cache: "OrderedDict[tuple, tuple[float, dict]]" = OrderedDict()
+_CACHE_MAX = 2048
 _grid_cache: dict[str, tuple[float, list]] = {}
 _TTL = 600  # seconds
 _GRID_TTL = 1800  # 30 min
 _GRID_CONCURRENCY = 16  # be polite to the Weather/AQ APIs
+
+
+def _recall(ck: tuple) -> dict | None:
+    """Return a fresh cached readout for a coordinate key, or None."""
+    entry = _cache.get(ck)
+    if entry and time.time() - entry[0] < _TTL:
+        _cache.move_to_end(ck)  # mark most-recently-used
+        return entry[1]
+    return None
+
+
+def _remember(ck: tuple, data: dict) -> None:
+    """Cache a readout and evict the oldest entries beyond the LRU cap."""
+    _cache[ck] = (time.time(), data)
+    _cache.move_to_end(ck)
+    while len(_cache) > _CACHE_MAX:
+        _cache.popitem(last=False)
 
 # Chennai bounding box: lat_min, lat_max, lng_min, lng_max
 CHENNAI_BBOX = (12.84, 13.24, 80.15, 80.34)
@@ -69,6 +90,41 @@ def current_air(lat: float, lng: float) -> dict | None:
                 "dominant": (uaqi or main).get("dominantPollutant"),
                 "health": (d.get("healthRecommendations") or {}).get("generalPopulation"),
             }
+    except Exception:
+        pass
+    return None
+
+
+def current_pollen(lat: float, lng: float) -> dict | None:
+    """Live pollen (tree/grass/weed) at a point — drives species trade-offs.
+
+    Coverage is uneven (esp. in India); returns None gracefully when the point
+    has no forecast, so callers simply omit the pollen block."""
+    try:
+        r = httpx.get(
+            "https://pollen.googleapis.com/v1/forecast:lookup",
+            params={"key": _key(), "location.latitude": lat, "location.longitude": lng, "days": 1},
+            timeout=8,
+        )
+        if r.status_code != 200:
+            return None
+        daily = (r.json().get("dailyInfo") or [])
+        if not daily:
+            return None
+        types = daily[0].get("pollenTypeInfo") or []
+        out, dominant, health = [], None, None
+        for t in types:
+            idx = t.get("indexInfo") or {}
+            val = idx.get("value")
+            out.append({"type": t.get("displayName") or t.get("code"), "value": val, "category": idx.get("category")})
+            if val is not None and (dominant is None or val > dominant["value"]):
+                dominant = {"type": t.get("displayName") or t.get("code"), "value": val, "category": idx.get("category")}
+            if health is None and t.get("healthRecommendations"):
+                recs = t["healthRecommendations"]
+                health = recs[0] if isinstance(recs, list) and recs else None
+        if not out:
+            return None
+        return {"dominant": dominant, "types": out, "health": health}
     except Exception:
         pass
     return None
@@ -134,22 +190,39 @@ def elevation(lat: float, lng: float) -> float | None:
     return None
 
 
-def realtime_point(lat: float, lng: float) -> dict:
+async def realtime_point(lat: float, lng: float) -> dict:
+    """All five live lookups CONCURRENTLY (was sequential: 5×1–2 s → ~max one).
+
+    Point-click latency is dominated by this function; keep it parallel.
+    """
     ck = (round(lat, 3), round(lng, 3))
-    now = time.time()
-    if ck in _cache and now - _cache[ck][0] < _TTL:
-        return _cache[ck][1]
-    w = current_weather(lat, lng)
-    a = current_air(lat, lng)
+    cached = _recall(ck)
+    if cached is not None:
+        return cached
+
+    w = a = fc = name = elev = pollen = None
+    try:
+        w, a, fc, name, elev, pollen = await asyncio.gather(
+            asyncio.to_thread(current_weather, lat, lng),
+            asyncio.to_thread(current_air, lat, lng),
+            asyncio.to_thread(weather_forecast, lat, lng),
+            asyncio.to_thread(reverse_geocode, lat, lng),
+            asyncio.to_thread(elevation, lat, lng),
+            asyncio.to_thread(current_pollen, lat, lng),
+        )
+    except Exception as exc:
+        log.warning("realtime_point gather failed: %s", type(exc).__name__)
+
     data = {
         "weather": w,
         "air": a,
-        "forecast": weather_forecast(lat, lng),
-        "name": reverse_geocode(lat, lng),
-        "elevation": elevation(lat, lng),
+        "forecast": fc or [],
+        "name": name,
+        "elevation": elev,
+        "pollen": pollen,
         "live": bool(w or a),
     }
-    _cache[ck] = (now, data)
+    _remember(ck, data)
     return data
 
 

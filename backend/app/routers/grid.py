@@ -55,10 +55,18 @@ def _idw(lat: float, lng: float, anchors: list[dict]) -> float:
 
 
 async def calibrated_grid(hazard: str, n: int = GRID_SIZE) -> tuple[list[dict], str]:
-    """Full-city lattice with live-calibrated, rank-normalised weights.
+    """Full-city lattice with live-calibrated weights + hazard display physics.
 
-    Shared by GET /grid (whole-city consumers, e.g. air-particle seeds) and
-    the tile engine (which slices it per tile). Falls back to the pure
+    heat  → UHI localization: cell minus its neighbourhood mean (box
+            high-pass), recentred at 0.5 — only genuine local heat islands
+            deviate from the transparent midpoint, never the whole city.
+    flood → hydrological coupling: elevation risk sharpened and multiplied
+            by drainage proximity — risk exists only where terrain and
+            channels support it.
+    air   → rank-normalised exposure gradient (dispersion field).
+    green → canopy density (NDVI proxy) as-is.
+
+    Shared by GET /grid and the tile engine. Falls back to the pure
     urban-form model when live anchors are unavailable.
     """
     points = grid_points(hazard, n)
@@ -74,10 +82,56 @@ async def calibrated_grid(hazard: str, n: int = GRID_SIZE) -> tuple[list[dict], 
         for p in points:
             live = _idw(p["lat"], p["lng"], anchors)
             p["weight"] = _LIVE_BLEND * live + (1 - _LIVE_BLEND) * p["weight"]
-        _stretch(points)
         source = "live+model"
 
+    if hazard == "heat":
+        _localize_uhi(points)
+    elif hazard == "flood":
+        if anchors:
+            _stretch(points)
+        _hydrologize(points)
+    elif anchors:
+        _stretch(points)
+
     return points, source
+
+
+def _localize_uhi(points: list[dict], radius: int = 3, gain: float = 2.6) -> None:
+    """Urban-heat-island transform: local deviation from the neighbourhood.
+
+    A heat island is a cell hotter than its OWN surroundings — not a cell in
+    the hot half of a citywide ranking (which by construction tints half the
+    city). Box high-pass over the regular lattice, recentred at 0.5 so the
+    diverging renderer's transparent dead-zone sits at "no anomaly".
+    """
+    lats = sorted({p["lat"] for p in points})
+    lngs = sorted({p["lng"] for p in points})
+    li = {v: i for i, v in enumerate(lats)}
+    gi = {v: i for i, v in enumerate(lngs)}
+    w = [[0.0] * len(lngs) for _ in lats]
+    for p in points:
+        w[li[p["lat"]]][gi[p["lng"]]] = p["weight"]
+
+    for p in points:
+        i, j = li[p["lat"]], gi[p["lng"]]
+        total = count = 0.0
+        for di in range(-radius, radius + 1):
+            for dj in range(-radius, radius + 1):
+                ii, jj = i + di, j + dj
+                if 0 <= ii < len(lats) and 0 <= jj < len(lngs):
+                    total += w[ii][jj]
+                    count += 1
+        anomaly = p["weight"] - total / count
+        p["weight"] = round(min(1.0, max(0.0, 0.5 + anomaly * gain)), 3)
+
+
+def _hydrologize(points: list[dict]) -> None:
+    """Flood risk only where terrain supports it: sharpen the elevation
+    signal and weight by proximity to real drainage (rivers, canals, marsh).
+    Cells far from any channel stay near-transparent."""
+    for p in points:
+        prox = float(p.get("waterway_proximity") or 0.0)
+        p["weight"] = round(min(1.0, (p["weight"] ** 1.5) * (0.25 + 0.75 * prox) * 1.55), 3)
 
 
 @router.get("/grid", response_model=GridResponse)

@@ -1,6 +1,14 @@
 import { useState, type FormEvent } from "react";
 import { useClimaStore } from "../../store/useClimaStore";
 import { fmtINR, fmtInt, mdToHtml } from "../../lib/format";
+import { useLoadingSteps } from "../../lib/useLoadingSteps";
+
+const RECO_STEPS = [
+  "Loading environmental datasets…",
+  "Estimating intervention…",
+  "Scoring benefit per rupee…",
+  "Drafting recommendation…",
+];
 
 function download(name: string, text: string) {
   const blob = new Blob([text], { type: "text/markdown" });
@@ -26,6 +34,7 @@ export default function ProposalCard() {
 
   const propError = useClimaStore((s) => s.propError);
   const [q, setQ] = useState("");
+  const recoStep = useLoadingSteps(recoBusy && !reco, RECO_STEPS);
   const effect = prop ? undefined : reco?.effect;
   const body = prop?.markdown
     ?? reco?.rationale
@@ -44,7 +53,16 @@ export default function ProposalCard() {
       {point?.prediction && !prop && <p className="ai-fore"><b>Forecast.</b> {point.prediction}</p>}
       {prop
         ? <div className="ai-body ai-md" dangerouslySetInnerHTML={{ __html: mdToHtml(prop.markdown) }} />
-        : <div className="ai-body">{body}</div>}
+        : recoBusy && !reco
+          ? (
+            <div className="ai-body">
+              <div className="skel skel-line" style={{ width: "92%" }} />
+              <div className="skel skel-line" style={{ width: "84%" }} />
+              <div className="skel skel-line" style={{ width: "70%" }} />
+              <div className="load-steps">{recoStep}</div>
+            </div>
+          )
+          : <div className="ai-body">{body}</div>}
       {propError && <div className="inline-err">Proposal generation failed — <button onClick={runProposal}>try again</button></div>}
 
       {effect && (

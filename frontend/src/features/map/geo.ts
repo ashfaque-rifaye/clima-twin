@@ -77,11 +77,13 @@ export const GREEN_AREAS: { name: string; polygon: LngLat[] }[] = [
   },
 ];
 
-/** Ecological corridor links along real features (rivers, coast, marsh belt). */
-export const GREEN_CORRIDORS: { name: string; path: LngLat[] }[] = [
-  { name: "Adyar river corridor", path: [[80.2, 13.015], [80.226, 13.011], [80.25, 13.009], [80.268, 13.012]] },
-  { name: "Coastal green edge", path: [[80.272, 13.0], [80.264, 12.97], [80.257, 12.93], [80.251, 12.89]] },
-  { name: "Marsh–forest link", path: [[80.2, 12.936], [80.19, 12.933], [80.181, 12.934]] },
+/** Ecological corridor links along real features (rivers, coast, marsh belt).
+ *  status: connectivity assessment — healthy | fragmented | missing. */
+export type CorridorStatus = "healthy" | "fragmented" | "missing";
+export const GREEN_CORRIDORS: { name: string; status: CorridorStatus; path: LngLat[] }[] = [
+  { name: "Adyar river corridor", status: "fragmented", path: [[80.2, 13.015], [80.226, 13.011], [80.25, 13.009], [80.268, 13.012]] },
+  { name: "Coastal green edge", status: "healthy", path: [[80.272, 13.0], [80.264, 12.97], [80.257, 12.93], [80.251, 12.89]] },
+  { name: "Marsh–forest link", status: "missing", path: [[80.2, 12.936], [80.19, 12.933], [80.181, 12.934]] },
 ];
 
 /** Points where corridor continuity is broken (flagged for intervention). */

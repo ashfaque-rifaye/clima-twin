@@ -118,14 +118,15 @@ export function makeTileLayer(hazard: HazardId): Layer {
     async getTileData({ index, signal }) {
       const t = await getTile(hazard, index.z, index.x, index.y, signal ?? undefined);
       let raster: FieldImage | null = null;
-      // green communicates through polygons/corridors, not a raster wash
-      if (t.cells.length && t.extent && hazard !== "green") {
+      if (t.cells.length && t.extent) {
         raster = buildTileRaster(
           t.cells,
           t.bounds,
           t.extent,
           meta.colorRange,
-          hazard === "heat" ? "anomaly" : "sequential",
+          // heat = UHI anomalies · green = thresholded canopy density (NDVI
+          // proxy) · flood/air = sequential exposure ramps
+          hazard === "heat" ? "anomaly" : hazard === "green" ? "canopy" : "sequential",
         );
       }
       return { ...t, raster };
@@ -280,14 +281,20 @@ function hotspotLayers(hazard: HazardId, hotspots: Hotspot[]): Layer[] {
 }
 
 /** Glowing channel: wide soft pass + narrow core, widths in METERS. */
-function channel(id: string, data: { name: string; path: LngLat[] }[], rgb: [number, number, number]): Layer[] {
+function channel(
+  id: string,
+  data: { name: string; path: LngLat[] }[],
+  rgb: [number, number, number],
+  core = 55,
+  soft = 260,
+): Layer[] {
   return [
     new PathLayer({
       id: `${id}-soft`,
       data,
       getPath: (d: { path: LngLat[] }) => d.path,
       getColor: [...rgb, 64] as RGBA,
-      getWidth: 260,
+      getWidth: soft,
       widthUnits: "meters",
       widthMinPixels: 3,
       widthMaxPixels: 26,
@@ -299,7 +306,7 @@ function channel(id: string, data: { name: string; path: LngLat[] }[], rgb: [num
       data,
       getPath: (d: { path: LngLat[] }) => d.path,
       getColor: [...rgb, 215] as RGBA,
-      getWidth: 55,
+      getWidth: core,
       widthUnits: "meters",
       widthMinPixels: 1.4,
       widthMaxPixels: 6,
@@ -371,17 +378,23 @@ function floodLayers(): Layer[] {
 
 function airLayers(airSeeds: AirSeed[], time: number): Layer[] {
   if (!airSeeds.length) return [];
-  // wind-advected transport: particles spawn where pollution is high and
-  // drift inland with the afternoon sea breeze, fading as they disperse
-  const TRAVEL = 0.05; // ≈ 5.5 km drift per cycle
+  // wind-advected transport: plumes spawn where pollution is high, drift
+  // inland with the sea breeze at intensity-dependent speed, meander gently
+  // (curl) and diffuse as they age — subtle, never strobing
+  const TRAVEL = 0.045; // ≈ 5 km drift per cycle
+  // unit vector perpendicular to the breeze, for cross-wind meander
+  const PERP = { dLng: -SEA_BREEZE.dLat, dLat: SEA_BREEZE.dLng };
   const particles = airSeeds.map((s) => {
     const phase = (time + s.phase) % 1;
-    const drift = phase * TRAVEL * (0.55 + s.w * 0.75);
+    const drift = phase * TRAVEL * (0.5 + s.w * 0.8);
+    const curl = Math.sin(phase * Math.PI * 2 + s.phase * 6.283) * 0.0032 * phase;
+    const age = Math.pow(Math.sin(Math.PI * phase), 0.75); // soft in/out
     return {
-      lng: s.lng + SEA_BREEZE.dLng * drift,
-      lat: s.lat + SEA_BREEZE.dLat * drift,
+      lng: s.lng + SEA_BREEZE.dLng * drift + PERP.dLng * curl,
+      lat: s.lat + SEA_BREEZE.dLat * drift + PERP.dLat * curl,
       w: s.w,
-      a: Math.sin(Math.PI * phase), // fade in → out over the cycle
+      a: age,
+      spread: 1 + phase * 1.6, // diffusion: plumes widen and thin as they travel
     };
   });
   return [
@@ -389,26 +402,26 @@ function airLayers(airSeeds: AirSeed[], time: number): Layer[] {
       id: "air-particles-glow",
       data: particles,
       getPosition: (d) => [d.lng, d.lat],
-      getRadius: 210,
+      getRadius: (d) => 150 * d.spread,
       radiusUnits: "meters",
-      radiusMaxPixels: 9,
+      radiusMaxPixels: 7,
       getFillColor: (d) => {
         const c = aqiRamp(d.w);
-        return [c[0], c[1], c[2], Math.round(52 * d.a)] as RGBA;
+        return [c[0], c[1], c[2], Math.round((38 / d.spread) * d.a)] as RGBA;
       },
-      updateTriggers: { getFillColor: time, getPosition: time },
+      updateTriggers: { getFillColor: time, getPosition: time, getRadius: time },
     }),
     new ScatterplotLayer<(typeof particles)[number]>({
       id: "air-particles",
       data: particles,
       getPosition: (d) => [d.lng, d.lat],
-      getRadius: 62,
+      getRadius: 55,
       radiusUnits: "meters",
-      radiusMinPixels: 1,
-      radiusMaxPixels: 2.6,
+      radiusMinPixels: 0.9,
+      radiusMaxPixels: 2.2,
       getFillColor: (d) => {
         const c = aqiRamp(d.w);
-        return [c[0], c[1], c[2], Math.round(215 * d.a)] as RGBA;
+        return [c[0], c[1], c[2], Math.round((190 / Math.sqrt(d.spread)) * d.a)] as RGBA;
       },
       updateTriggers: { getFillColor: time, getPosition: time },
     }),
@@ -442,9 +455,41 @@ function greenLayers(): Layer[] {
       backgroundPadding: [5, 3],
       fontFamily: "Roboto Mono, monospace",
     }),
-    // corridor links along real features
-    ...channel("green-corridors", GREEN_CORRIDORS, [52, 211, 153]),
-    // flagged continuity breaks
+    // corridor links along real features, coloured by connectivity status:
+    // healthy = green · fragmented = amber · missing/potential = grey
+    ...GREEN_CORRIDORS.flatMap((c) => {
+      const rgb: [number, number, number] =
+        c.status === "healthy" ? [52, 211, 153] : c.status === "fragmented" ? [246, 196, 83] : [148, 163, 178];
+      return channel(`green-corridor-${c.name}`, [c], rgb, c.status === "missing" ? 30 : 55, c.status === "missing" ? 140 : 260);
+    }),
+    new TextLayer({
+      id: "green-corridor-status",
+      data: GREEN_CORRIDORS.map((c) => {
+        const mid = sampleAlong(c.path, 0.5);
+        return { name: c.name, status: c.status, lng: mid.lng, lat: mid.lat };
+      }),
+      getPosition: (d) => [d.lng, d.lat],
+      getText: (d) => `${d.name} · ${d.status}`,
+      getSize: 10,
+      getColor: (d) => (d.status === "healthy" ? [180, 245, 215, 240] : d.status === "fragmented" ? [250, 224, 150, 240] : [200, 210, 220, 235]),
+      background: true,
+      getBackgroundColor: [6, 20, 14, 190],
+      backgroundPadding: [5, 3],
+      fontFamily: "Roboto Mono, monospace",
+    }),
+    // continuity breaks + potential restoration halos
+    new ScatterplotLayer({
+      id: "green-restoration-halo",
+      data: FRAGMENTATION_POINTS,
+      getPosition: (d) => [d.lng, d.lat],
+      getRadius: 520,
+      radiusUnits: "meters",
+      radiusMaxPixels: 44,
+      filled: false,
+      stroked: true,
+      getLineColor: [255, 176, 90, 150] as RGBA,
+      lineWidthMinPixels: 1.4,
+    }),
     new IconLayer({
       id: "green-fragmentation",
       data: FRAGMENTATION_POINTS,

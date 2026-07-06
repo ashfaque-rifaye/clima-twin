@@ -1,6 +1,28 @@
 import { useClimaStore } from "../../store/useClimaStore";
 import { HAZARD_META } from "../hazards/hazardMeta";
 import { aqiBand, diurnalDeltaC, hourLabel, ndviLabel } from "../../lib/format";
+import { useLoadingSteps } from "../../lib/useLoadingSteps";
+
+const LOAD_STEPS = [
+  "Loading microclimate…",
+  "Fetching live weather…",
+  "Reading air quality…",
+  "Sampling elevation…",
+  "Resolving locality…",
+];
+
+/** Compact provenance summary: live API metrics vs model-derived. */
+function srcSummary(sources?: Record<string, string>): { live: string[]; model: string[] } | null {
+  if (!sources) return null;
+  const live: string[] = [];
+  const model: string[] = [];
+  for (const [k, v] of Object.entries(sources)) {
+    if (["heat", "air", "flood", "elevation"].includes(k)) {
+      (v.includes("live") || v.includes("API") ? live : model).push(k);
+    }
+  }
+  return { live, model };
+}
 
 export default function MicroclimateCard() {
   const point = useClimaStore((s) => s.point);
@@ -11,6 +33,9 @@ export default function MicroclimateCard() {
   const retryPoint = useClimaStore((s) => s.retryPoint);
   const meta = HAZARD_META[hazard];
   const v = point?.vulnerability;
+  const loading = pointBusy && !point?.live;
+  const step = useLoadingSteps(loading, LOAD_STEPS);
+  const src = srcSummary(point?.sources);
 
   let heroValue = "\u2014";
   let heroLabel = meta.primaryLabel;
@@ -47,36 +72,46 @@ export default function MicroclimateCard() {
       </div>
 
       <div className="mc-hero">
-        <div className="mc-hero-val" style={{ color: heroColor }}>
-          {pointBusy && !point?.live ? "\u2026" : heroValue}
-        </div>
+        {loading ? (
+          <div className="skel skel-hero" aria-label="loading" />
+        ) : (
+          <div className="mc-hero-val" style={{ color: heroColor }}>{heroValue}</div>
+        )}
         <div className="mc-hero-meta">
           <b>{heroLabel}</b>
-          <span>{heroSub}</span>
+          <span>{loading ? "querying live datasets" : heroSub}</span>
         </div>
       </div>
+      {loading && <div className="load-steps">{step}</div>}
 
       <div className="metric-grid">
         <div className="metric">
           <span className="metric-k mono">NDVI</span>
-          <span className="metric-v" style={{ color: "var(--ct-good)" }}>{v?.ndvi ?? "\u2014"}</span>
-          <span className="metric-s">{ndviLabel(v?.ndvi)}</span>
+          {loading ? <span className="skel skel-val" /> : <span className="metric-v" style={{ color: "var(--ct-good)" }}>{v?.ndvi ?? "\u2014"}</span>}
+          <span className="metric-s">{loading ? "\u2026" : ndviLabel(v?.ndvi)}</span>
         </div>
         <div className="metric">
           <span className="metric-k mono">AQI</span>
-          <span className={`metric-v aqi-${aqiBand(point?.air?.aqi)}`}>{point?.air?.aqi ?? "\u2014"}</span>
-          <span className="metric-s">{point?.air?.dominant ?? point?.air?.category ?? "\u2014"}</span>
+          {loading ? <span className="skel skel-val" /> : <span className={`metric-v aqi-${aqiBand(point?.air?.aqi)}`}>{point?.air?.aqi ?? "\u2014"}</span>}
+          <span className="metric-s">{loading ? "\u2026" : point?.air?.dominant ?? point?.air?.category ?? "\u2014"}</span>
         </div>
         <div className="metric">
           <span className="metric-k mono">Flood</span>
-          <span className="metric-v" style={{ color: "var(--ct-flood)", textTransform: "capitalize" }}>{point?.flood?.risk ?? "\u2014"}</span>
-          <span className="metric-s">{point?.flood?.rain_prob ?? 0}% rain</span>
+          {loading ? <span className="skel skel-val" /> : <span className="metric-v" style={{ color: "var(--ct-flood)", textTransform: "capitalize" }}>{point?.flood?.risk ?? "\u2014"}</span>}
+          <span className="metric-s">{loading ? "\u2026" : `${point?.flood?.rain_prob ?? 0}% rain`}</span>
         </div>
       </div>
 
       <div className="mc-foot mono">
         Elevation {point?.elevation_m != null ? `${point.elevation_m.toFixed(0)} m` : "\u2014"}{" \u00B7 "}{point?.source ?? "\u2014"}
       </div>
+      {src && !loading && (
+        <div className="mc-src">
+          {src.live.length > 0 && <><b>live:</b> {src.live.join(" \u00B7 ")}</>}
+          {src.live.length > 0 && src.model.length > 0 && "  \u2014  "}
+          {src.model.length > 0 && <>model: {src.model.join(" \u00B7 ")}</>}
+        </div>
+      )}
       {pointError && !pointBusy && (
         <div className="inline-err">Live data unavailable for this point \u2014 <button onClick={retryPoint}>retry</button></div>
       )}

@@ -22,7 +22,7 @@ from fastapi import APIRouter, Path
 from pydantic import BaseModel
 
 from ..datasets import CHENNAI_ASSETS, INDIA_STATES, TN_DISTRICTS, TN_RIVERS
-from .grid import calibrated_grid
+from ..regions import Region, regions_intersecting
 
 router = APIRouter(tags=["tiles"])
 
@@ -145,18 +145,18 @@ class _Lattice:
         )
 
 
-_lattices: dict[tuple[str, int], _Lattice] = {}
-_lattice_src: dict[tuple[str, int], str] = {}
+_lattices: dict[tuple[str, str, int], _Lattice] = {}
+_lattice_src: dict[tuple[str, str, int], str] = {}
 
 
-async def _lattice(hazard: str, epoch: int) -> tuple[_Lattice, str]:
-    key = (hazard, epoch)
+async def _lattice(region: Region, hazard: str, epoch: int) -> tuple[_Lattice, str]:
+    key = (region.id, hazard, epoch)
     if key not in _lattices:
-        points, source = await calibrated_grid(hazard)
+        points, source = await region.provider(hazard)
         _lattices[key] = _Lattice(points)
         _lattice_src[key] = source
-        # keep only the two most recent epochs per hazard
-        for k in [k for k in _lattices if k[0] == hazard and k[1] < epoch - 1]:
+        # keep only the two most recent epochs per region+hazard
+        for k in [k for k in _lattices if k[:2] == (region.id, hazard) and k[2] < epoch - 1]:
             _lattices.pop(k, None)
             _lattice_src.pop(k, None)
     return _lattices[key], _lattice_src[key]
@@ -237,19 +237,22 @@ async def tile(
         resp.summaries = [TileSummary(**d) for d in _summaries(TN_DISTRICTS, hazard, w, s, e, n)]
         resp.rivers = [TileRiver(**r) for r in _rivers_in(w, s, e, n)]
     else:
-        lattice, source = await _lattice(hazard, epoch)
-        resp.source = source
-        resp.extent = lattice.extent
-        if band == "city":
-            resp.cells = [TileCell(**c) for c in lattice.slice(w, s, e, n)]
-        else:  # block / street: 100 m derived cells, clipped to the data extent
-            ex = lattice.extent
-            lat0, lat1 = max(s, ex[1]), min(n, ex[3])
-            lng0, lng1 = max(w, ex[0]), min(e, ex[2])
-            if lat0 <= lat1 and lng0 <= lng1:
-                pad_lat, pad_lng = 2 * BLOCK_LAT_STEP, 2 * BLOCK_LNG_STEP
-                resp.cells = [TileCell(**c) for c in _block_cells(
-                    lat0 - pad_lat, lat1 + pad_lat, lng0 - pad_lng, lng1 + pad_lng, lattice)]
+        # fine bands come from whichever registered region(s) the tile touches
+        for region in regions_intersecting(w, s, e, n):
+            lattice, source = await _lattice(region, hazard, epoch)
+            resp.source = source
+            resp.extent = lattice.extent
+            if band == "city":
+                resp.cells += [TileCell(**c) for c in lattice.slice(w, s, e, n)]
+            else:  # block / street: 100 m derived cells, clipped to the data extent
+                ex = lattice.extent
+                lat0, lat1 = max(s, ex[1]), min(n, ex[3])
+                lng0, lng1 = max(w, ex[0]), min(e, ex[2])
+                if lat0 <= lat1 and lng0 <= lng1:
+                    pad_lat, pad_lng = 2 * BLOCK_LAT_STEP, 2 * BLOCK_LNG_STEP
+                    resp.cells += [TileCell(**c) for c in _block_cells(
+                        lat0 - pad_lat, lat1 + pad_lat, lng0 - pad_lng, lng1 + pad_lng, lattice)]
+        if band != "city":
             resp.assets = [TileAsset(**a) for a in _assets_in(w, s, e, n)]
 
     # cheap manual LRU: cap size, drop oldest epoch entries first

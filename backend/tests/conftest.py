@@ -27,9 +27,10 @@ FAKE_REALTIME = {
 @pytest.fixture(autouse=True)
 def offline(monkeypatch):
     """Default state: live APIs reachable-but-mocked, Gemini unavailable."""
-    monkeypatch.setattr(point_mod, "realtime_point", lambda lat, lng: FAKE_REALTIME)
-    monkeypatch.setattr(point_mod, "gemini_available", lambda: False)
-    monkeypatch.setattr(point_mod, "generate", lambda *a, **k: None)
+    async def fake_realtime(lat, lng):
+        return FAKE_REALTIME
+
+    monkeypatch.setattr(point_mod, "realtime_point", fake_realtime)
 
     async def no_anchors(hazard, n=8):
         return []
@@ -38,7 +39,10 @@ def offline(monkeypatch):
 
     for mod in (ask_mod, recommend_mod, proposal_mod):
         monkeypatch.setattr(mod, "gemini_available", lambda: False)
-        monkeypatch.setattr(mod, "generate", lambda *a, **k: None)
+        # Patch both AI entrypoints regardless of which a module imports, so the
+        # suite stays fully offline no matter how routers evolve.
+        monkeypatch.setattr(mod, "generate", lambda *a, **k: None, raising=False)
+        monkeypatch.setattr(mod, "generate_json", lambda *a, **k: None, raising=False)
     yield
 
 

@@ -15,6 +15,14 @@ class Settings(BaseSettings):
     # Gemini (Google AI Studio, free Flash tier)
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"  # Flash only — never Pro (paid)
+    # Generation controls (deterministic-leaning for planning outputs)
+    gemini_temperature: float = 0.4
+    gemini_max_output_tokens: int = 1024
+    # In-process LRU for identical prompts — protects the free-tier daily cap
+    # and cuts latency on repeat /proposal / /recommend calls.
+    gemini_cache_size: int = 256
+    # Responsible-AI: block medium+ harmful content. "off" disables (not advised).
+    gemini_safety: str = "BLOCK_MEDIUM_AND_ABOVE"
 
     # Google Maps Platform (browser key, referrer-restricted)
     google_maps_api_key: str = ""
@@ -25,6 +33,12 @@ class Settings(BaseSettings):
     gcp_project: str = ""
     bq_dataset: str = "climatwin"
     bq_location: str = "asia-south1"
+    bq_grid_table: str = "grid_cells"
+    # Where the base analysis grid comes from:
+    #   auto      -> try BigQuery, fall back to the synthetic grid on any failure
+    #   bigquery  -> require BigQuery (still falls back so the app never crashes)
+    #   synthetic -> always use the in-code urban-form grid (no cloud calls)
+    grid_source: str = "auto"
 
     # CORS
     cors_origins: str = "http://localhost:5173"

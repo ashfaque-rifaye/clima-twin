@@ -1,15 +1,18 @@
-"""GET /point — real-time values for all three hazards at a lat/lng + AI prediction.
+"""GET /point — real-time values for all three hazards at a lat/lng.
 
-Live data from Google Weather + Air Quality APIs (cached); flood modeled from
-rainfall forecast + terrain. Falls back to the sample grid when live data is
-unavailable (e.g., no server key).
+The five live lookups (Weather, Air Quality, hourly forecast, Geocoding,
+Elevation) run concurrently; the short-term prediction is a deterministic
+forecast heuristic so the endpoint never blocks on an LLM (the Gemini
+narrative arrives via POST /recommend, which runs in parallel client-side).
+Every field carries provenance in `sources` — live API vs urban-form model.
 """
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from ..data import nearest_cell
+from ..ml import MODEL as LST_MODEL
+from ..pollen_model import synthetic_pollen
 from ..realtime import realtime_point
-from ..gemini import generate, gemini_available
 
 router = APIRouter(tags=["point"])
 
@@ -38,20 +41,53 @@ class PointResponse(BaseModel):
     heat: dict | None = None
     air: dict | None = None
     flood: dict | None = None
+    pollen: dict | None = None
     elevation_m: float | None = None
     vulnerability: dict | None = None
     prediction: str | None = None
+    model_baseline_c: float | None = None  # trained LST model's predicted feels-like
     source: str = "sample"
+    sources: dict[str, str] = {}  # per-metric provenance (live API vs model)
+
+
+def _predict(area: str, heat: dict, air: dict, fc: list[dict], rain: int) -> str:
+    """Deterministic short-term outlook from the hourly forecast (no LLM —
+    keeps /point fast; the Gemini narrative arrives via /recommend)."""
+    now_c = heat.get("feels_like_c")
+    peaks = [h.get("feels_like_c") for h in fc if h.get("feels_like_c") is not None]
+    parts: list[str] = []
+    if now_c is not None and peaks:
+        peak = max(peaks)
+        if peak >= now_c + 1:
+            parts.append(f"Feels-like climbing toward {peak:.0f}°C in the next hours")
+        elif peak <= now_c - 1:
+            parts.append(f"Feels-like easing toward {peak:.0f}°C")
+        else:
+            parts.append(f"Feels-like holding near {now_c:.0f}°C")
+    if rain >= 55:
+        parts.append(f"{rain}% rain chance — waterlogging watch in low-lying stretches")
+    elif rain >= 25:
+        parts.append(f"{rain}% rain chance")
+    aqi = air.get("aqi")
+    if aqi is not None:
+        parts.append(f"AQI ~{aqi} ({air.get('category', '—')})")
+    action = (
+        "advance drainage checks" if rain >= 55
+        else "prioritise shade and hydration at waiting areas" if (now_c or 0) >= 38
+        else "conditions manageable — good window for field work"
+    )
+    return f"{'; '.join(parts)}. For {area}: {action}."
 
 
 @router.get("/point", response_model=PointResponse)
-def point(
+async def point(
     lat: float = Query(ge=-90, le=90),
     lng: float = Query(ge=-180, le=180),
 ):
     cell = nearest_cell(lat, lng) or {}
-    rt = realtime_point(lat, lng)
+    rt = await realtime_point(lat, lng)
     w, a, fc = rt.get("weather"), rt.get("air"), rt.get("forecast") or []
+    pollen = rt.get("pollen")
     live = rt.get("live", False)
     elev = rt.get("elevation") if rt.get("elevation") is not None else cell.get("elevation_m")
     area = rt.get("name") or cell.get("name") or "this area"
@@ -84,16 +120,7 @@ def point(
         "basis": basis,
     }
 
-    prediction = None
-    if gemini_available() and live:
-        peak = max([(h.get("feels_like_c") or 0) for h in fc], default=(heat["feels_like_c"] or 0))
-        prediction = generate(
-            f"Location: {area} in Chennai (elevation {elev} m). Right now: feels-like "
-            f"{heat['feels_like_c']}C, AQI {air['aqi']} ({air.get('category')}), rain chance {rain}%. "
-            f"Next 8h feels-like peaks around {peak}C. In 2 short sentences, predict how heat, air and "
-            f"flood risk will change over the next few hours and the single best action to take. "
-            f"Plain English, no markdown."
-        )
+    prediction = _predict(area, heat, air, fc, rain)
 
     foot = cell.get("bus_commuters_daily", 0)
     vulnerability = {
@@ -105,9 +132,28 @@ def point(
         "data_blind_spot": cell.get("data_density") == "low",
     }
 
+    model_baseline_c = LST_MODEL.predict(cell) if cell else None
+
+    sources = {
+        "heat": "Google Weather API (live)" if (w and live) else "urban-form model",
+        "air": "Google Air Quality API (live)" if (a and a.get("aqi") is not None) else "urban-form model",
+        "flood": ("Google Elevation + rain forecast (live)" if rt.get("elevation") is not None
+                  else "elevation-drainage model"),
+        "elevation": "Google Elevation API" if rt.get("elevation") is not None else "urban-form model",
+        "area_name": "Google Geocoding" if rt.get("name") else "urban-form model",
+        "vulnerability": "urban-form model (census-informed)",
+        "ndvi": "NDVI proxy — Earth Engine export pending",
+        "prediction": "hourly-forecast heuristic",
+        "model_baseline": ("BigQuery ML LST model (in-process)" if model_baseline_c is not None
+                           else "LST model not available"),
+        "pollen": "Google Pollen API (live)" if pollen else "Pollen API (no data for this point)",
+    }
+
     return PointResponse(
         lat=lat, lng=lng, area_name=area, live=live,
-        heat=heat, air=air, flood=flood, elevation_m=elev,
+        heat=heat, air=air, flood=flood, pollen=pollen, elevation_m=elev,
         vulnerability=vulnerability, prediction=prediction,
+        model_baseline_c=model_baseline_c,
         source="live" if live else "sample",
+        sources=sources,
     )

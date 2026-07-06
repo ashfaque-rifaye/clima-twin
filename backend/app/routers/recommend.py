@@ -9,9 +9,15 @@ from pydantic import BaseModel, Field
 
 from ..data import nearest_cell, SPECIES_BY_KEY
 from ..model import compute_effect
-from ..gemini import generate, gemini_available
+from ..gemini import generate_json, gemini_available
 
 router = APIRouter(tags=["recommend"])
+
+
+class _AIRecommendation(BaseModel):
+    """Schema Gemini fills — validated structure, not free prose."""
+    rationale: str = ""
+    trade_offs: list[str] = []
 
 
 class RecommendRequest(BaseModel):
@@ -83,16 +89,20 @@ def recommend(req: RecommendRequest):
 
     ai = None
     if gemini_available():
-        ai = generate(
+        ai = generate_json(
             f"You are an urban climate planner for Chennai. Goal: {req.goal} at {cell['name']}. "
             f"Now: feels-like {cell['feels_like_c']}C, AQI {cell['air_quality_index']}, "
             f"{cell['green_cover_pct']}% canopy, flood risk {cell['flood_risk']}, "
             f"~{cell['bus_commuters_daily']} daily bus commuters. "
             f"Plan: {names} -> projected -{eff['delta_feels_like_c']}C feels-like, "
             f"helps ~{eff['people_helped']} people, costs INR {int(eff['cost_inr'])}. "
-            f"In 3 short sentences, plain English: why this fits, the main co-benefit, "
-            f"and one risk to watch. No preamble, no markdown."
+            "Return JSON. 'rationale' = 3 short plain-English sentences (why this fits, the "
+            "main co-benefit, one risk to watch), no markdown. 'trade_offs' = up to 3 short "
+            "risk strings.",
+            response_schema=_AIRecommendation,
         )
+    if not isinstance(ai, dict):
+        ai = None
 
     hazard = _goal_hazard(req.goal)
     if hazard == "flood":
@@ -117,7 +127,16 @@ def recommend(req: RecommendRequest):
             f"low-canopy area."
         )
 
-    rationale = ai or fallback
+    ai_rationale = (ai or {}).get("rationale", "").strip()
+    rationale = ai_rationale or fallback
+
+    # Deterministic, species-tied risks are the base; merge any distinct AI ones.
+    trade_offs = list(eff["what_could_go_wrong"])
+    for t in (ai or {}).get("trade_offs", []):
+        if isinstance(t, str) and t.strip() and t not in trade_offs:
+            trade_offs.append(t.strip())
+    if not trade_offs:
+        trade_offs = ["No major risks flagged for this mix."]
 
     return RecommendResponse(
         area_name=cell["name"],
@@ -125,6 +144,6 @@ def recommend(req: RecommendRequest):
         interventions=mix,
         effect=eff,
         rationale=rationale,
-        trade_offs=eff["what_could_go_wrong"] or ["No major risks flagged for this mix."],
-        source="gemini" if ai else "rule-based",
+        trade_offs=trade_offs,
+        source="gemini" if ai_rationale else "rule-based",
     )

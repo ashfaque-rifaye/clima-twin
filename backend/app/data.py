@@ -250,6 +250,9 @@ def hazard_weight(cell: dict, hazard: str) -> float:
         return _clamp(float(cell.get("flood_score", 0)), 0.0, 1.0)
     if hazard == "air":
         return _clamp((float(cell.get("air_quality_index", 0)) - 55) / 170, 0.0, 1.0)
+    if hazard == "green":
+        # canopy density (NDVI proxy) — NOT temperature (was a fall-through bug)
+        return _clamp(float(cell.get("green_cover_pct", 0)) / 55.0, 0.0, 1.0)
     return _clamp((float(cell.get("feels_like_c", 0)) - 35) / 14, 0.0, 1.0)
 
 
@@ -268,6 +271,7 @@ def grid_points(hazard: str = "heat", size: int = GRID_SIZE) -> list[dict]:
         "heat": "feels_like_c",
         "flood": "flood_score",
         "air": "air_quality_index",
+        "green": "green_cover_pct",
     }.get(hazard, "feels_like_c")
     return [
         {
@@ -279,6 +283,7 @@ def grid_points(hazard: str = "heat", size: int = GRID_SIZE) -> list[dict]:
             "flood_risk": c.get("flood_risk"),
             "aqi": c.get("air_quality_index"),
             "feels_like_c": c.get("feels_like_c"),
+            "waterway_proximity": c.get("waterway_proximity"),
         }
         for c in cells
     ]

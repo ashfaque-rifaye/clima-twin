@@ -140,17 +140,25 @@ export function blur(buf: Float32Array, w: number, h: number): Float32Array {
  */
 export function anomalyColor(v: number): RGBA {
   const t = Math.min(1, Math.max(-1, (v - 0.5) * 2));
-  if (Math.abs(t) < 0.12) return [0, 0, 0, 0]; // dead zone at the median
-  if (t < 0) {
-    const k = (Math.abs(t) - 0.12) / 0.88;
-    return [24, 170, 190, Math.round(90 * k)];
-  }
-  const k = (t - 0.12) / 0.88;
-  const ramp: RGBA[] = [[246, 196, 83, 0], [255, 138, 60, 150], [255, 59, 48, 215], [122, 0, 16, 240]];
+  // wide transparent dead-zone: "no anomaly" must be invisible, and gamma
+  // keeps mild anomalies faint so only genuine islands earn strong colour
+  if (Math.abs(t) < 0.18) return [0, 0, 0, 0];
+  const k = Math.pow((Math.abs(t) - 0.18) / 0.82, 1.35);
+  if (t < 0) return [24, 170, 190, Math.round(80 * k)];
+  const ramp: RGBA[] = [[246, 196, 83, 26], [255, 138, 60, 130], [255, 59, 48, 205], [122, 0, 16, 235]];
   return rampColor(k, ramp);
 }
 
-export type FieldMode = "sequential" | "anomaly";
+/** Canopy density (NDVI proxy): transparent below sparse cover, deepening
+ * green where vegetation is real (parks, river buffers, campuses). */
+export function canopyColor(v: number): RGBA {
+  if (v < 0.35) return [0, 0, 0, 0];
+  const k = (v - 0.35) / 0.65;
+  const ramp: RGBA[] = [[18, 110, 74, 42], [34, 165, 108, 96], [82, 214, 151, 138]];
+  return rampColor(k, ramp);
+}
+
+export type FieldMode = "sequential" | "anomaly" | "canopy";
 
 /**
  * Rasterize a tile: cells (tile + margin) → smooth colorized canvas clipped
@@ -194,7 +202,10 @@ export function buildTileRaster(
     for (let x = 0; x < res; x++) {
       const lng = west + ((x + 0.5) / res) * (east - west);
       const v = values[y * res + x];
-      const [r, g, b, a] = mode === "anomaly" ? anomalyColor(v) : rampColor(v, ramp);
+      const [r, g, b, a] =
+        mode === "anomaly" ? anomalyColor(v)
+        : mode === "canopy" ? canopyColor(v)
+        : rampColor(v, ramp);
       const o = (y * res + x) * 4;
       img.data[o] = r;
       img.data[o + 1] = g;

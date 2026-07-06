@@ -118,6 +118,8 @@ export interface PointData {
   };
   prediction?: string;
   source: string;
+  /** Per-metric provenance: live Google API vs urban-form model. */
+  sources?: Record<string, string>;
 }
 
 export interface GridPoint {
